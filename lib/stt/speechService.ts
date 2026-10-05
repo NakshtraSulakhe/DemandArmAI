@@ -32,9 +32,9 @@ export async function transcribeWithGeminiAudio(
       cleanModelName(primaryModel),
       'gemini-3.5-transcribe',
       'gemini-3.8-flash',
-      'gemini-3.6-flash',
+      'gemini-3.8-flash',
       'gemini-3.5-flash',
-      'gemini-2.0-flash',
+      'gemini-3.8-flash',
     ].filter(Boolean))
   );
 

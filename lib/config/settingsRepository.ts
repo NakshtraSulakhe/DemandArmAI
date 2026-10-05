@@ -118,7 +118,7 @@ export class SettingsRepository {
    */
   public updateTestMetadata(provider: 'gemini' | 'googleStt' | 'assemblyAi', success: boolean): void {
     const currentRaw = dbStore.getSettings();
-    const meta: Record<string, ProviderMetadata> = currentRaw.providerMetadata || {};
+    const meta: ProviderMetadata = currentRaw.providerMetadata || {};
     meta[provider] = {
       ...(meta[provider] || {}),
       lastTestedAt: new Date().toISOString(),

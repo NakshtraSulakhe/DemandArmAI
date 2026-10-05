@@ -44,36 +44,81 @@ export default function LeadDetailModal({
   onSaveManualEdit,
   onOverrideQaStatus,
 }: LeadDetailModalProps) {
-  if (!job) return null;
-
   const [activeTab, setActiveTab] = useState<'qa' | 'raw' | 'edited' | 'audit'>('qa');
   const [isEditingTranscript, setIsEditingTranscript] = useState(false);
-  const [editedText, setEditedText] = useState(job.editedTranscript || '');
+  const [editedText, setEditedText] = useState(job?.editedTranscript || '');
   const [overrideStatus, setOverrideStatus] = useState<'QUALIFIED' | 'NEEDS_REVIEW' | 'REJECTED'>(
-    (job.manualOverrideStatus as any) || job.qaStatus || 'NEEDS_REVIEW'
+    (job?.manualOverrideStatus as any) || job?.qaStatus || 'NEEDS_REVIEW'
   );
-  const [overrideNotes, setOverrideNotes] = useState(job.manualOverrideNotes || '');
+  const [overrideNotes, setOverrideNotes] = useState(job?.manualOverrideNotes || '');
   const [isSubmittingOverride, setIsSubmittingOverride] = useState(false);
   const [isRetrying, setIsRetrying] = useState(false);
   const [isSavingEdit, setIsSavingEdit] = useState(false);
+  const [copiedTranscript, setCopiedTranscript] = useState(false);
+  const [copiedFeedback, setCopiedFeedback] = useState(false);
+  const [selectedRecIdx, setSelectedRecIdx] = useState(0);
+
+  // Sync state when job changes
+  React.useEffect(() => {
+    if (job) {
+      setEditedText(job.editedTranscript || '');
+      setOverrideStatus((job.manualOverrideStatus as any) || job.qaStatus || 'NEEDS_REVIEW');
+      setOverrideNotes(job.manualOverrideNotes || '');
+      setSelectedRecIdx(0);
+      setIsEditingTranscript(false);
+      setActiveTab('qa');
+    }
+  }, [job]);
+
+  React.useEffect(() => {
+    if (!job) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [job, onClose]);
+
+  if (!job) return null;
+
+  const handleCopyTranscript = () => {
+    if (job?.editedTranscript) {
+      navigator.clipboard.writeText(job.editedTranscript);
+      setCopiedTranscript(true);
+      setTimeout(() => setCopiedTranscript(false), 2000);
+    }
+  };
+
+  const handleCopyFeedback = () => {
+    if (!job) return;
+    const feedbackText =
+      job.qaResultJson?.supportingEvidence?.join('\n') ||
+      job.manualOverrideNotes ||
+      `QA Status: ${job.manualOverrideStatus || job.qaStatus || 'NEEDS_REVIEW'}\nOverall Score: ${job.qaResultJson?.overallScore || 85}%`;
+    navigator.clipboard.writeText(feedbackText);
+    setCopiedFeedback(true);
+    setTimeout(() => setCopiedFeedback(false), 2000);
+  };
 
   // Selected recording selector
-  const recordingsList: CrmRecordingItem[] = job.lead?.recordings?.length
+  const recordingsList: CrmRecordingItem[] = job?.lead?.recordings?.length
     ? job.lead.recordings
-    : job.lead?.recordingUrl
+    : job?.lead?.recordingUrl
     ? [{ id: '1', lead_id: job.lead.id, file_path: '', uploaded_at: '', url: job.lead.recordingUrl, download_url: job.lead.recordingUrl }]
     : [];
 
-  const [selectedRecIdx, setSelectedRecIdx] = useState(0);
   const currentRec = recordingsList[selectedRecIdx] || null;
 
   const audioStreamUrl = currentRec
     ? `/api/crm/proxy-audio?url=${encodeURIComponent(currentRec.url)}`
     : '';
 
-  const effectiveQaStatus = job.manualOverrideStatus || job.qaStatus || 'NEEDS_REVIEW';
+  const effectiveQaStatus = job?.manualOverrideStatus || job?.qaStatus || 'NEEDS_REVIEW';
 
   const handleRetry = async () => {
+    if (!job) return;
     setIsRetrying(true);
     try {
       await onRetryJob(job.id);
@@ -83,6 +128,7 @@ export default function LeadDetailModal({
   };
 
   const handleSaveEdit = async () => {
+    if (!job) return;
     setIsSavingEdit(true);
     try {
       await onSaveManualEdit(job.id, editedText);
@@ -93,6 +139,7 @@ export default function LeadDetailModal({
   };
 
   const handleApplyOverride = async () => {
+    if (!job) return;
     setIsSubmittingOverride(true);
     try {
       await onOverrideQaStatus(job.id, overrideStatus, overrideNotes);
@@ -100,16 +147,6 @@ export default function LeadDetailModal({
       setIsSubmittingOverride(false);
     }
   };
-
-  React.useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        onClose();
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [onClose]);
 
   return (
     <div
@@ -459,16 +496,35 @@ export default function LeadDetailModal({
                 </div>
 
                 {!isEditingTranscript ? (
-                  <button
-                    onClick={() => {
-                      setEditedText(job.editedTranscript || '');
-                      setIsEditingTranscript(true);
-                    }}
-                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition-colors"
-                  >
-                    <Edit3 className="w-3.5 h-3.5 text-blue-400" />
-                    <span>Edit Manually</span>
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={handleCopyTranscript}
+                      disabled={!job.editedTranscript}
+                      className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-emerald-600/20 hover:bg-emerald-600 text-emerald-400 hover:text-white border border-emerald-500/30 transition-all cursor-pointer disabled:opacity-40"
+                    >
+                      <Sparkles className="w-3.5 h-3.5" />
+                      <span>{copiedTranscript ? 'Copied Transcript!' : 'Copy Edited Transcript'}</span>
+                    </button>
+
+                    <button
+                      onClick={handleCopyFeedback}
+                      className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-indigo-600/20 hover:bg-indigo-600 text-indigo-400 hover:text-white border border-indigo-500/30 transition-all cursor-pointer"
+                    >
+                      <FileText className="w-3.5 h-3.5" />
+                      <span>{copiedFeedback ? 'Copied Feedback!' : 'Copy Agent Feedback'}</span>
+                    </button>
+
+                    <button
+                      onClick={() => {
+                        setEditedText(job.editedTranscript || '');
+                        setIsEditingTranscript(true);
+                      }}
+                      className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition-colors"
+                    >
+                      <Edit3 className="w-3.5 h-3.5 text-blue-400" />
+                      <span>Edit Manually</span>
+                    </button>
+                  </div>
                 ) : (
                   <div className="flex items-center gap-2">
                     <button

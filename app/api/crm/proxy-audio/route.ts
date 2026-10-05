@@ -9,8 +9,14 @@ export async function GET(req: Request) {
       return NextResponse.json({ success: false, error: 'Target recording URL is required' }, { status: 400 });
     }
 
-    // Secure URL validation to ensure only tarajglobal or authorized audio endpoints are fetched
-    if (!targetUrl.startsWith('https://app.tarajglobal.com/') && !targetUrl.startsWith('https://storage.googleapis.com/')) {
+    // Secure URL validation to ensure only authorized audio endpoints are fetched
+    const isAuthorized =
+      targetUrl.startsWith('https://app.tarajglobal.com/') ||
+      targetUrl.startsWith('http://localhost/') ||
+      targetUrl.startsWith('https://localhost/') ||
+      targetUrl.startsWith('https://storage.googleapis.com/');
+
+    if (!isAuthorized) {
       return NextResponse.json({ success: false, error: 'Unauthorized audio target domain' }, { status: 403 });
     }
 

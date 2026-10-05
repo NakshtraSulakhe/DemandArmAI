@@ -5,13 +5,6 @@ import { crmClient } from '../../../lib/crm/crmClient';
 
 export async function GET(req: Request) {
   try {
-    // Ensure background server auto-sync timer is running
-    crmClient.ensureAutoSyncStarted();
-
-    // Trigger background sync if last sync was > 15s ago
-    if (Date.now() - crmClient.getLastSyncTime() > 15000) {
-      crmClient.syncLeads().catch((err) => console.error('Background sync trigger error:', err));
-    }
     const { searchParams } = new URL(req.url);
     const clientCode = searchParams.get('clientCode');
     const campaignCode = searchParams.get('campaignCode');

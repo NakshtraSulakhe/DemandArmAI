@@ -7,10 +7,20 @@ import { ProcessingJobItem } from '../types';
 export class JobWorker {
   private isProcessing = false;
 
+  public isPaused(): boolean {
+    const settings = dbStore.getSettings();
+    return !!settings.isProcessingPaused;
+  }
+
   /**
    * Triggers processing of pending or failed jobs in configurable batch sizes.
    */
   public async processQueue(maxBatch: number = 10): Promise<{ processedCount: number; errorsCount: number }> {
+    if (this.isPaused()) {
+      console.log('[JobWorker] Queue processing skipped: Pipeline is PAUSED by user.');
+      return { processedCount: 0, errorsCount: 0 };
+    }
+
     if (this.isProcessing) {
       return { processedCount: 0, errorsCount: 0 };
     }
@@ -107,7 +117,31 @@ export class JobWorker {
 
       // Step 3: AI Transcript Editing (Gemini)
       if (job.status === 'AI_EDITING' || !job.editedTranscript) {
-        dbStore.addAuditLog(job.id, 'STEP_AI_EDITING', `Constructing dynamic prompt (${client.code} + ${campaign.code}) and dispatching to Gemini API...`);
+        // Point 16: Client Without Prompt Check
+        if (!client.globalPrompt || client.globalPrompt.trim() === '') {
+          const errMsg = `Transcript editing prompt is not configured for client ${client.code}.`;
+          job.status = 'CONFIGURATION_REQUIRED';
+          job.stepError = errMsg;
+          dbStore.saveJob(job);
+          dbStore.addAuditLog(job.id, 'CONFIGURATION_REQUIRED', errMsg);
+          return job;
+        }
+
+        // Point 17: Campaign Without Configuration Check
+        if (!campaign && client.allowClientPromptFallback === false) {
+          const errMsg = `Campaign configuration missing for code ${lead.campaignCode} and client prompt fallback is disabled for client ${client.code}.`;
+          job.status = 'CAMPAIGN_CONFIGURATION_REQUIRED';
+          job.stepError = errMsg;
+          dbStore.saveJob(job);
+          dbStore.addAuditLog(job.id, 'CAMPAIGN_CONFIGURATION_REQUIRED', errMsg);
+          return job;
+        }
+
+        dbStore.addAuditLog(
+          job.id,
+          'STEP_AI_EDITING',
+          `Constructing dynamic prompt (${client.code} v${client.promptVersion || 1} ${campaign ? `+ Campaign ${campaign.code}` : ''}) and dispatching to Gemini API...`
+        );
 
         const { editedTranscript, versionTag } = await geminiService.editTranscript(
           client,

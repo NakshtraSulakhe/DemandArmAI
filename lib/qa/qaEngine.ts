@@ -9,7 +9,7 @@ export class QaEngine {
    */
   public async evaluateLead(
     client: ClientConfig,
-    campaign: CampaignConfig,
+    campaign: CampaignConfig | undefined,
     lead: CrmLeadItem,
     rawTranscript: RawTranscriptData,
     editedTranscript: string
@@ -27,12 +27,12 @@ export class QaEngine {
     apiKey: string,
     modelName: string,
     client: ClientConfig,
-    campaign: CampaignConfig,
+    campaign: CampaignConfig | undefined,
     lead: CrmLeadItem,
     transcript: string
   ): Promise<QaResultData | null> {
     const candidateModels = Array.from(
-      new Set([modelName, 'gemini-3.8-flash', 'gemini-3.5-transcribe', 'gemini-3.6-flash', 'gemini-3.5-flash', 'gemini-2.0-flash'].filter(Boolean))
+      new Set([modelName, 'gemini-3.8-flash', 'gemini-3.5-flash', 'gemini-3.8-flash', 'gemini-1.5-flash'].filter(Boolean))
     );
 
     const prompt = `You are a strict Quality Assurance Lead Auditor. Evaluate the following call transcript against client & campaign requirements.
@@ -40,9 +40,9 @@ export class QaEngine {
 CLIENT: ${client.name} (${client.code})
 GLOBAL CRITERIA: ${client.qualificationCriteria}
 
-CAMPAIGN: ${campaign.name} (${campaign.code})
-ASSET: ${campaign.assetTitle}
-RULES OVERRIDE: ${campaign.qualificationRulesOverride || 'None'}
+CAMPAIGN: ${campaign?.name || 'Default Campaign'} (${campaign?.code || 'N/A'})
+ASSET: ${campaign?.assetTitle || 'General Solution Brief'}
+RULES OVERRIDE: ${campaign?.qualificationRulesOverride || 'None'}
 
 CRM LEAD METADATA:
 Contact: ${lead.contactName}, Company: ${lead.companyName}, Stated Title: ${lead.jobTitle}

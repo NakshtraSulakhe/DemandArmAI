@@ -1,3 +1,15 @@
+export interface ClientPromptVersion {
+  id: string;
+  clientId: string;
+  clientCode: string;
+  promptType: 'TRANSCRIPT_EDITING' | 'PRE_EDIT_QA' | 'POST_EDIT_QA';
+  promptText: string;
+  version: number;
+  isActive: boolean;
+  createdBy: string;
+  createdAt: string;
+}
+
 export interface ClientConfig {
   id: string;
   name: string;
@@ -5,9 +17,14 @@ export interface ClientConfig {
   globalPrompt: string;
   qualificationCriteria: string;
   isActive: boolean;
+  autoSyncEnabled?: boolean;
+  autoProcessingEnabled?: boolean;
+  allowClientPromptFallback?: boolean;
+  promptVersion?: number;
   createdAt: string;
   updatedAt: string;
   campaigns?: CampaignConfig[];
+  promptVersions?: ClientPromptVersion[];
 }
 
 export interface CampaignConfig {
@@ -106,7 +123,9 @@ export type JobStatus =
   | 'AI_EDITING'
   | 'QA_EVALUATING'
   | 'COMPLETED'
-  | 'FAILED';
+  | 'FAILED'
+  | 'CONFIGURATION_REQUIRED'
+  | 'CAMPAIGN_CONFIGURATION_REQUIRED';
 
 export interface ProcessingJobItem {
   id: string;
@@ -146,12 +165,28 @@ export interface AuditLogItem {
   timestamp: string;
 }
 
+export interface ProviderMetadataItem {
+  updatedAt?: string;
+  lastTestedAt?: string;
+  lastTestStatus?: 'success' | 'failed' | 'untested';
+}
+
+export interface ProviderMetadata {
+  gemini?: ProviderMetadataItem;
+  googleStt?: ProviderMetadataItem;
+  assemblyAi?: ProviderMetadataItem;
+}
+
 export interface SystemSettingsConfig {
   id: string;
   crmEndpoint: string;
   crmApiKey: string;
   sttProvider?: string;
   sttApiKey?: string;
+  assemblyAiApiKey?: string;
+  defaultSttProvider?: string;
+  defaultEditingProvider?: string;
+  providerMetadata?: ProviderMetadata;
   gcsBucketName: string;
   gcpProjectId: string;
   gcpClientEmail: string;
@@ -167,6 +202,7 @@ export interface SystemSettingsConfig {
   autoSyncInterval: number;
   autoGenerateTranscripts: boolean;
   autoQaEvaluation: boolean;
+  isProcessingPaused?: boolean;
   audioRetentionDays: number;
   sttCostPerMinute: number;
   geminiInputCostPer1M: number;

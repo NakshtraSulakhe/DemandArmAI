@@ -21,28 +21,9 @@ export class CrmClient {
   }
 
   public ensureAutoSyncStarted(): void {
-    if (this.autoSyncTimer) return;
-
-    const settings = dbStore.getSettings();
-    const intervalMs = Math.max((settings.autoSyncInterval || 15) * 1000, 10000);
-
-    console.log(`[CrmClient] Starting server-side background auto-sync timer every ${intervalMs / 1000}s...`);
-
-    // Trigger initial background sync
-    this.syncLeads().catch((err) => console.error('[CrmClient] Initial background sync error:', err));
-
-    this.autoSyncTimer = setInterval(() => {
-      this.syncLeads()
-        .then(() => {
-          try {
-            const { jobWorker } = require('../jobs/jobWorker');
-            jobWorker.processQueue(10).catch((err: any) => console.error('[CrmClient] Auto-worker error:', err));
-          } catch (e) {
-            console.error('[CrmClient] Failed to invoke job worker:', e);
-          }
-        })
-        .catch((err) => console.error('[CrmClient] Background auto-sync error:', err));
-    }, intervalMs);
+    // Automatic GET API polling is disabled to prevent server load & "too many requests" errors.
+    // Lead ingestion is handled 100% real-time via Webhooks (/api/webhooks/lead).
+    return;
   }
 
   /**
@@ -86,124 +67,113 @@ export class CrmClient {
         };
       }
 
-    const crmBaseUrl =
-      settings.crmEndpoint ||
-      'https://app.tarajglobal.com/demandflowbridge/api/get_leads.php';
+      const crmBaseUrl =
+        settings.crmEndpoint ||
+        'https://app.tarajglobal.com/demandflowbridge/api/get_leads.php';
 
-    let totalFetchedCount = 0;
-    let newLeadsCount = 0;
-    let updatedLeadsCount = 0;
-    let newJobsCount = 0;
-    const clientSyncDetails: { clientCode: string; count: number; pages: number; error?: string }[] = [];
+      let totalFetchedCount = 0;
+      let newLeadsCount = 0;
+      let updatedLeadsCount = 0;
+      let newJobsCount = 0;
+      const clientSyncDetails: { clientCode: string; count: number; pages: number; error?: string }[] = [];
 
-    const syncedLeadsMap = new Map<string, CrmLeadItem>();
-    const syncedJobsMap = new Map<string, ProcessingJobItem>();
+      const syncedLeadsMap = new Map<string, CrmLeadItem>();
+      const syncedJobsMap = new Map<string, ProcessingJobItem>();
 
-    // Process every active client code dynamically
-    for (const clientCode of activeClientCodes) {
-      try {
-        const { leads: clientLeads, totalPages } = await this.fetchAllPagesForClient(
-          crmBaseUrl,
-          settings.crmApiKey,
-          clientCode
-        );
+      // Process every active client code dynamically
+      for (const clientCode of activeClientCodes) {
+        try {
+          const { leads: clientLeads, totalPages } = await this.fetchAllPagesForClient(
+            crmBaseUrl,
+            settings.crmApiKey,
+            clientCode
+          );
 
-        clientSyncDetails.push({
-          clientCode,
-          count: clientLeads.length,
-          pages: totalPages,
-        });
+          clientSyncDetails.push({
+            clientCode,
+            count: clientLeads.length,
+            pages: totalPages,
+          });
 
-        // Filter and save ONLY QA status = "pending" leads
-        for (const rawLead of clientLeads) {
-          const rawStatus = (
-            rawLead.qa_status ||
-            rawLead.quality_status ||
-            rawLead.raw_lead_data?.qa_status ||
-            rawLead.raw_lead_data?.quality_status ||
-            ''
-          )
-            .toString()
-            .trim()
-            .toLowerCase();
+          // Process EVERY fetched CRM lead regardless of QA status
+          for (const rawLead of clientLeads) {
+            totalFetchedCount++;
+            const parsedLead = this.mapRawLeadToCrmLeadItem(rawLead, clientCode);
 
-          // Strictly filter only qa_status = "pending"
-          if (rawStatus !== 'pending') {
-            continue;
-          }
-
-          totalFetchedCount++;
-          const parsedLead = this.mapRawLeadToCrmLeadItem(rawLead, clientCode);
-
-          // Auto-register campaign if missing in local database
-          let matchingCampaign = dbStore.getCampaignByCode(parsedLead.campaignCode);
-          if (!matchingCampaign && parsedLead.campaignCode) {
-            const newCampaignData: Partial<CampaignConfig> = {
-              name: parsedLead.campaignName || `Campaign ${parsedLead.campaignCode}`,
-              code: parsedLead.campaignCode,
-              clientCode: parsedLead.clientCode,
-              assetTitle: `${parsedLead.campaignName || parsedLead.campaignCode} Briefing`,
-              valueProps: ['Enterprise Quality Software Solution', '24/7 Premium Support SLA'],
-              additionalEditingInstructions: 'Ensure accurate preservation of customer feature requirements and timelines.',
-              isActive: true,
-            };
-            matchingCampaign = dbStore.saveCampaign(newCampaignData, false);
-          }
-
-          if (matchingCampaign) {
-            parsedLead.configurationStatus = 'CONFIGURED';
-          } else {
-            parsedLead.configurationStatus = 'CAMPAIGN_NOT_CONFIGURED';
-          }
-
-          if (!syncedLeadsMap.has(parsedLead.leadRef)) {
-            syncedLeadsMap.set(parsedLead.leadRef, parsedLead);
-            newLeadsCount++;
-          }
-
-          // Enqueue automatic STT + AI editing job for QA Pending leads with recordings
-          if (parsedLead.recordingUrl || (parsedLead.recordings && parsedLead.recordings.length > 0)) {
-            if (!syncedJobsMap.has(parsedLead.leadRef)) {
-              const newJob: ProcessingJobItem = {
-                id: `job_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-                leadId: parsedLead.id,
-                leadRef: parsedLead.leadRef,
-                status: 'PENDING',
-                attempts: 0,
-                createdAt: new Date().toISOString(),
-                updatedAt: new Date().toISOString(),
+            // Auto-register campaign if missing in local database
+            let matchingCampaign = dbStore.getCampaignByCode(parsedLead.campaignCode);
+            if (!matchingCampaign && parsedLead.campaignCode) {
+              const newCampaignData: Partial<CampaignConfig> = {
+                name: parsedLead.campaignName || `Campaign ${parsedLead.campaignCode}`,
+                code: parsedLead.campaignCode,
+                clientCode: parsedLead.clientCode,
+                assetTitle: `${parsedLead.campaignName || parsedLead.campaignCode} Briefing`,
+                valueProps: ['Enterprise Quality Software Solution', '24/7 Premium Support SLA'],
+                additionalEditingInstructions: 'Ensure accurate preservation of customer feature requirements and timelines.',
+                isActive: true,
               };
-              syncedJobsMap.set(parsedLead.leadRef, newJob);
-              newJobsCount++;
+              matchingCampaign = dbStore.saveCampaign(newCampaignData, false);
+            }
+
+            if (matchingCampaign) {
+              parsedLead.configurationStatus = 'CONFIGURED';
+            } else {
+              parsedLead.configurationStatus = 'CAMPAIGN_NOT_CONFIGURED';
+            }
+
+            const existingLead = dbStore.getLeadByRef(parsedLead.leadRef);
+            if (!existingLead) {
+              newLeadsCount++;
+            } else {
+              updatedLeadsCount++;
+            }
+
+            syncedLeadsMap.set(parsedLead.leadRef, parsedLead);
+
+            // Evaluate queue eligibility: Pending QA + Recording Available + Not Already Completed
+            const existingJob = dbStore.getJobById(parsedLead.leadRef);
+            if (dbStore.isQueueEligible(parsedLead, existingJob)) {
+              if (!syncedJobsMap.has(parsedLead.leadRef) && !existingJob) {
+                const newJob: ProcessingJobItem = {
+                  id: `job_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+                  leadId: parsedLead.id,
+                  leadRef: parsedLead.leadRef,
+                  status: 'PENDING',
+                  attempts: 0,
+                  createdAt: new Date().toISOString(),
+                  updatedAt: new Date().toISOString(),
+                };
+                syncedJobsMap.set(parsedLead.leadRef, newJob);
+                newJobsCount++;
+              }
             }
           }
+        } catch (err: any) {
+          console.warn(`Error synchronizing CRM leads for client code ${clientCode}:`, err.message);
+          clientSyncDetails.push({
+            clientCode,
+            count: 0,
+            pages: 0,
+            error: err.message,
+          });
         }
-      } catch (err: any) {
-        console.warn(`Error synchronizing CRM leads for client code ${clientCode}:`, err.message);
-        clientSyncDetails.push({
-          clientCode,
-          count: 0,
-          pages: 0,
-          error: err.message,
-        });
       }
-    }
 
-    // Atomically swap in the fresh pending leads and jobs without UI downtime
-    dbStore.replacePendingLeadsAndJobs(
-      Array.from(syncedLeadsMap.values()),
-      Array.from(syncedJobsMap.values())
-    );
+      // Atomically swap in the fresh pending leads and jobs without UI downtime
+      dbStore.replacePendingLeadsAndJobs(
+        Array.from(syncedLeadsMap.values()),
+        Array.from(syncedJobsMap.values())
+      );
 
-    return {
-      fetchedCount: totalFetchedCount,
-      newLeadsCount,
-      updatedLeadsCount,
-      newJobsCount,
-      activeClientCodes,
-      clientSyncDetails,
-      timestamp: new Date().toISOString(),
-    };
+      return {
+        fetchedCount: totalFetchedCount,
+        newLeadsCount,
+        updatedLeadsCount,
+        newJobsCount,
+        activeClientCodes,
+        clientSyncDetails,
+        timestamp: new Date().toISOString(),
+      };
     } finally {
       this.isSyncing = false;
     }
@@ -238,7 +208,14 @@ export class CrmClient {
       throw new Error(`CRM API HTTP Error ${res1.status}: ${res1.statusText}`);
     }
 
-    const data1 = await res1.json();
+    const text1 = await res1.text();
+    let data1: any = {};
+    try {
+      data1 = JSON.parse(text1);
+    } catch {
+      throw new Error(`CRM Server returned non-JSON response: ${text1.slice(0, 80)}`);
+    }
+
     let allLeads: any[] = data1.leads || data1.data || [];
     const totalPages = data1.total_pages || 1;
 
@@ -341,7 +318,17 @@ export class CrmClient {
       (parsedRecordings.length > 0 ? parsedRecordings[0].url : '');
 
     if (!recordingUrl && recordingPath) {
-      recordingUrl = `https://app.tarajglobal.com/demandflowbridge/api/get_recording.php?file=${encodeURIComponent(recordingPath)}`;
+      const settings = dbStore.getSettings();
+      let baseUrl = 'https://app.tarajglobal.com/demandflowbridge';
+      if (settings.crmEndpoint) {
+        try {
+          const u = new URL(settings.crmEndpoint);
+          baseUrl = `${u.origin}${u.pathname.replace(/\/api\/get_leads\.php.*/, '')}`;
+        } catch {
+          // ignore parsing error
+        }
+      }
+      recordingUrl = `${baseUrl}/api/get_recording.php?file=${encodeURIComponent(recordingPath)}`;
     }
 
     return {
@@ -372,6 +359,85 @@ export class CrmClient {
       syncedAt: new Date().toISOString(),
       createdAt: raw.created_at || new Date().toISOString(),
       updatedAt: raw.updated_at || new Date().toISOString(),
+    };
+  }
+
+  /**
+   * Processes incoming Webhook lead payload (single object or array of objects).
+   * Upserts leads into local DB and enqueues jobs for eligible pending QA leads.
+   */
+  public processIncomingWebhookPayload(payload: any): {
+    processedCount: number;
+    newLeadsCount: number;
+    enqueuedJobsCount: number;
+    processedLeads: { leadRef: string; status: string }[];
+  } {
+    const rawItems: any[] = Array.isArray(payload) ? payload : [payload];
+    let processedCount = 0;
+    let newLeadsCount = 0;
+    let enqueuedJobsCount = 0;
+    const processedLeads: { leadRef: string; status: string }[] = [];
+
+    for (const rawItem of rawItems) {
+      if (!rawItem || typeof rawItem !== 'object') continue;
+
+      const fallbackClientCode = rawItem.client_code || rawItem.clientCode || '1020';
+      const parsedLead = this.mapRawLeadToCrmLeadItem(rawItem, fallbackClientCode);
+
+      // Auto-register campaign if missing in local database
+      let matchingCampaign = dbStore.getCampaignByCode(parsedLead.campaignCode);
+      if (!matchingCampaign && parsedLead.campaignCode) {
+        const newCampaignData: Partial<CampaignConfig> = {
+          name: parsedLead.campaignName || `Campaign ${parsedLead.campaignCode}`,
+          code: parsedLead.campaignCode,
+          clientCode: parsedLead.clientCode,
+          assetTitle: `${parsedLead.campaignName || parsedLead.campaignCode} Briefing`,
+          valueProps: ['Enterprise Quality Software Solution', '24/7 Premium Support SLA'],
+          additionalEditingInstructions: 'Ensure accurate preservation of customer feature requirements and timelines.',
+          isActive: true,
+        };
+        matchingCampaign = dbStore.saveCampaign(newCampaignData, false);
+      }
+
+      parsedLead.configurationStatus = matchingCampaign ? 'CONFIGURED' : 'CAMPAIGN_NOT_CONFIGURED';
+
+      const existingLead = dbStore.getLeadByRef(parsedLead.leadRef);
+      if (!existingLead) {
+        newLeadsCount++;
+      }
+
+      dbStore.saveLead(parsedLead);
+      processedCount++;
+
+      // Check queue eligibility and create processing job if eligible
+      const existingJob = dbStore.getJobById(parsedLead.leadRef);
+      if (dbStore.isQueueEligible(parsedLead, existingJob)) {
+        if (!existingJob) {
+          const newJob: ProcessingJobItem = {
+            id: `job_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+            leadId: parsedLead.id,
+            leadRef: parsedLead.leadRef,
+            status: 'PENDING',
+            attempts: 0,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          };
+          dbStore.upsertLeadsAndSyncJobs([parsedLead], [newJob]);
+          enqueuedJobsCount++;
+        }
+      }
+
+      processedLeads.push({
+        leadRef: parsedLead.leadRef,
+        status: 'processed',
+      });
+    }
+
+    return {
+      processedCount,
+      newLeadsCount,
+      enqueuedJobsCount,
+      processedLeads,
     };
   }
 }

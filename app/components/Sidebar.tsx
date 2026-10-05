@@ -4,19 +4,19 @@ import React from 'react';
 import {
   LayoutDashboard,
   Users,
+  Layers,
   Sliders,
   BarChart2,
   Settings,
   ChevronLeft,
   ChevronRight,
   Shield,
-  UserCheck,
-  Building2,
-  LogOut,
   Zap,
+  Sun,
+  Moon,
 } from 'lucide-react';
 
-export type NavTab = 'dashboard' | 'all-leads' | 'configuration' | 'analytics' | 'settings';
+export type NavTab = 'dashboard' | 'all-leads' | 'queue' | 'configuration' | 'analytics' | 'settings';
 
 interface SidebarProps {
   activeTab: NavTab;
@@ -25,6 +25,9 @@ interface SidebarProps {
   setIsCollapsed: (collapsed: boolean) => void;
   mobileOpen: boolean;
   setMobileOpen: (open: boolean) => void;
+  queueCount?: number;
+  theme?: 'dark' | 'light';
+  onToggleTheme?: () => void;
 }
 
 export default function Sidebar({
@@ -34,10 +37,14 @@ export default function Sidebar({
   setIsCollapsed,
   mobileOpen,
   setMobileOpen,
+  queueCount = 0,
+  theme = 'dark',
+  onToggleTheme,
 }: SidebarProps) {
-  const navItems: { id: NavTab; label: string; icon: React.ReactNode; badge?: string }[] = [
+  const navItems: { id: NavTab; label: string; icon: React.ReactNode; badge?: number }[] = [
     { id: 'dashboard', label: 'Dashboard', icon: <LayoutDashboard className="w-4 h-4" /> },
     { id: 'all-leads', label: 'All Leads', icon: <Users className="w-4 h-4" /> },
+    { id: 'queue', label: 'Queue', icon: <Layers className="w-4 h-4" />, badge: queueCount },
     { id: 'configuration', label: 'Configuration', icon: <Sliders className="w-4 h-4" /> },
     { id: 'analytics', label: 'Analytics', icon: <BarChart2 className="w-4 h-4" /> },
     { id: 'settings', label: 'Settings', icon: <Settings className="w-4 h-4" /> },
@@ -55,9 +62,8 @@ export default function Sidebar({
 
       {/* Sidebar Container */}
       <aside
-        className={`fixed top-0 bottom-0 left-0 z-50 flex flex-col bg-slate-900/95 border-r border-slate-800/80 backdrop-blur-md transition-all duration-300 ease-in-out ${
-          isCollapsed ? 'w-20' : 'w-64'
-        } ${mobileOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}
+        className={`fixed top-0 bottom-0 left-0 z-50 flex flex-col bg-slate-900/95 border-r border-slate-800/80 backdrop-blur-md transition-all duration-300 ease-in-out ${isCollapsed ? 'w-20' : 'w-64'
+          } ${mobileOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}
       >
         {/* Brand Header */}
         <div className="flex items-center justify-between h-16 px-4 border-b border-slate-800/80">
@@ -69,7 +75,6 @@ export default function Sidebar({
               <div className="truncate">
                 <h1 className="font-bold text-sm text-slate-100 tracking-tight flex items-center gap-1.5">
                   DemandArm AI
-                  <Zap className="w-3 h-3 text-amber-400 fill-amber-400" />
                 </h1>
                 <span className="text-[10px] text-slate-400 font-medium tracking-wide uppercase block">
                   Call QA & STT Platform
@@ -99,26 +104,48 @@ export default function Sidebar({
                   setActiveTab(item.id);
                   setMobileOpen(false);
                 }}
-                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all ${
-                  isActive
-                    ? 'bg-blue-600 text-white shadow-md shadow-blue-600/30'
-                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
-                } ${isCollapsed ? 'justify-center px-0' : ''}`}
+                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all ${isActive
+                  ? 'bg-blue-600 text-white shadow-md shadow-blue-600/30'
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
+                  } ${isCollapsed ? 'justify-center px-0' : ''}`}
                 title={isCollapsed ? item.label : undefined}
               >
                 <span className={`${isActive ? 'text-white' : 'text-slate-400'}`}>{item.icon}</span>
-                {!isCollapsed && <span className="truncate">{item.label}</span>}
+                {!isCollapsed && <span className="truncate flex-1 text-left">{item.label}</span>}
+                {item.badge !== undefined && item.badge > 0 && !isCollapsed && (
+                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${isActive ? 'bg-white/20 text-white' : 'bg-blue-500/20 text-blue-400 border border-blue-500/30'
+                    }`}>
+                    {item.badge}
+                  </span>
+                )}
               </button>
             );
           })}
         </nav>
 
-        {/* User Profile Section at Bottom */}
-        <div className="p-3 border-t border-slate-800/80">
+        {/* User Profile Section & Theme Toggle at Bottom */}
+        <div className="p-3 border-t border-slate-800/80 space-y-2">
+          {onToggleTheme && (
+            <button
+              onClick={onToggleTheme}
+              className={`w-full flex items-center gap-3 p-2 rounded-xl bg-slate-950/40 hover:bg-slate-800/60 border border-slate-800/60 text-xs font-medium text-slate-300 transition-colors ${isCollapsed ? 'justify-center' : ''
+                }`}
+              title={theme === 'light' ? 'Switch to Dark Mode' : 'Switch to Light Mode'}
+            >
+              {theme === 'light' ? (
+                <Moon className="w-4 h-4 text-indigo-400 shrink-0" />
+              ) : (
+                <Sun className="w-4 h-4 text-amber-400 shrink-0" />
+              )}
+              {!isCollapsed && (
+                <span>{theme === 'light' ? 'Dark Theme' : 'Light Theme'}</span>
+              )}
+            </button>
+          )}
+
           <div
-            className={`flex items-center gap-3 p-2 rounded-xl bg-slate-950/60 border border-slate-800/60 ${
-              isCollapsed ? 'justify-center p-2' : ''
-            }`}
+            className={`flex items-center gap-3 p-2 rounded-xl bg-slate-950/60 border border-slate-800/60 ${isCollapsed ? 'justify-center p-2' : ''
+              }`}
           >
             <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-purple-600 to-blue-600 flex items-center justify-center text-white text-xs font-bold shrink-0">
               NA

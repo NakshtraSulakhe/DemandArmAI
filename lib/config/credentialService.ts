@@ -13,6 +13,7 @@ export interface GoogleSttCredentials {
   gcsBucket: string;
   clientEmail: string;
   privateKey: string;
+  hasPrivateKey: boolean;
 }
 
 export interface AssemblyAiCredentials {
@@ -48,7 +49,7 @@ export class CredentialService {
 
     return {
       apiKey: apiKey.trim(),
-      model: model.trim(),
+      model: model.replace(/-(high|low|medium)$/i, '').trim(),
     };
   }
 
@@ -72,6 +73,7 @@ export class CredentialService {
       gcsBucket: settings.gcsBucketName || 'qtranscript-recordings',
       clientEmail: settings.gcpClientEmail || '',
       privateKey: settings.gcpPrivateKey || '',
+      hasPrivateKey: !!(settings.gcpPrivateKey && settings.gcpPrivateKey.trim()),
     };
   }
 
@@ -120,7 +122,7 @@ export class CredentialService {
       gemini: {
         configured: !!(settings.geminiApiKey && settings.geminiApiKey.trim()),
         maskedKey: maskApiKey(settings.geminiApiKey),
-        model: settings.geminiModel || 'gemini-3.6-flash',
+        model: settings.geminiModel || 'gemini-3.8-flash',
         temperature: settings.geminiTemperature ?? 0.2,
         maxTokens: settings.geminiMaxTokens || 4096,
         updatedAt: meta.gemini?.updatedAt || settings.updatedAt,
@@ -129,7 +131,7 @@ export class CredentialService {
       },
       googleStt: {
         configured: !!((settings.sttApiKey && settings.sttApiKey.trim()) || (settings.gcpPrivateKey && settings.gcpPrivateKey.trim())),
-        maskedKey: maskApiKey(settings.sttApiKey),
+        maskedKey: maskApiKey(settings.sttApiKey || ''),
         projectId: settings.gcpProjectId || '',
         gcsBucket: settings.gcsBucketName || '',
         clientEmail: settings.gcpClientEmail || '',
@@ -140,7 +142,7 @@ export class CredentialService {
       },
       assemblyAi: {
         configured: !!(settings.assemblyAiApiKey && settings.assemblyAiApiKey.trim()),
-        maskedKey: maskApiKey(settings.assemblyAiApiKey),
+        maskedKey: maskApiKey(settings.assemblyAiApiKey || ''),
         updatedAt: meta.assemblyAi?.updatedAt || settings.updatedAt,
         lastTestedAt: meta.assemblyAi?.lastTestedAt,
         lastTestStatus: meta.assemblyAi?.lastTestStatus || 'untested',

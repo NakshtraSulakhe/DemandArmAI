@@ -7,6 +7,7 @@ import {
   ProcessingJobItem,
   AuditLogItem,
   SystemSettingsConfig,
+  ClientPromptVersion,
 } from '../types';
 
 const DATA_DIR = path.join(process.cwd(), '.data');
@@ -18,6 +19,7 @@ interface LocalStoreData {
   leads: CrmLeadItem[];
   jobs: ProcessingJobItem[];
   auditLogs: AuditLogItem[];
+  clientPrompts?: ClientPromptVersion[];
   settings: SystemSettingsConfig;
 }
 
@@ -42,6 +44,7 @@ const DEFAULT_SETTINGS: SystemSettingsConfig = {
   autoSyncInterval: 15,
   autoGenerateTranscripts: true,
   autoQaEvaluation: true,
+  isProcessingPaused: false,
   audioRetentionDays: 90,
   sttCostPerMinute: 0.016,
   geminiInputCostPer1M: 0.075,
@@ -191,18 +194,11 @@ export class LocalDbStore {
         if (!this.data.settings || !this.data.settings.crmEndpoint || this.data.settings.crmEndpoint.includes('mock-server')) {
           this.data.settings = { ...DEFAULT_SETTINGS, ...(this.data.settings || {}), crmEndpoint: DEFAULT_SETTINGS.crmEndpoint };
         }
-        if (this.data.settings && (!this.data.settings.geminiModel || this.data.settings.geminiModel.includes('2.5-flash') || this.data.settings.geminiModel.includes('3.6-flash'))) {
+        if (this.data.settings && (!this.data.settings.geminiModel || this.data.settings.geminiModel.includes('2.5-flash') || this.data.settings.geminiModel.includes('3.6-flash') || this.data.settings.geminiModel.includes('-high'))) {
           this.data.settings.geminiModel = 'gemini-3.8-flash';
         }
-        // Filter out any non-pending QA leads from previously stored data
-        if (Array.isArray(this.data.leads)) {
-          this.data.leads = this.data.leads.filter((l) => {
-            const st = (l.qaStatusCrm || l.rawLeadData?.qa_status || l.rawLeadData?.quality_status || '').toString().trim().toLowerCase();
-            return st === 'pending';
-          });
-          const validLeadIds = new Set(this.data.leads.map((l) => l.id));
-          const validLeadRefs = new Set(this.data.leads.map((l) => l.leadRef));
-          this.data.jobs = (this.data.jobs || []).filter((j) => validLeadIds.has(j.leadId) || validLeadRefs.has(j.leadRef));
+        if (!Array.isArray(this.data.clientPrompts)) {
+          this.data.clientPrompts = [];
         }
         // Cap audit logs to max 300 items to keep store lightweight and ultrafast
         if (Array.isArray(this.data.auditLogs) && this.data.auditLogs.length > 300) {
@@ -216,6 +212,7 @@ export class LocalDbStore {
           leads: INITIAL_LEADS,
           jobs: INITIAL_JOBS,
           auditLogs: INITIAL_AUDIT_LOGS,
+          clientPrompts: [],
           settings: DEFAULT_SETTINGS,
         };
         this.persist();
@@ -228,6 +225,7 @@ export class LocalDbStore {
         leads: INITIAL_LEADS,
         jobs: INITIAL_JOBS,
         auditLogs: INITIAL_AUDIT_LOGS,
+        clientPrompts: [],
         settings: DEFAULT_SETTINGS,
       };
     }
@@ -259,37 +257,107 @@ export class LocalDbStore {
     return this.data.settings;
   }
 
-  // Clients
+  // Clients & Prompt Versions
   public getClients(): ClientConfig[] {
-    return this.data.clients;
+    return this.data.clients.map((c) => ({
+      ...c,
+      promptVersions: this.getClientPromptVersions(c.code),
+    }));
   }
 
   public getClientByCode(code: string): ClientConfig | undefined {
-    return this.data.clients.find((c) => c.code.trim().toUpperCase() === code.trim().toUpperCase());
+    if (!code) return undefined;
+    const client = this.data.clients.find((c) => c.code.trim().toUpperCase() === code.trim().toUpperCase());
+    if (!client) return undefined;
+    return {
+      ...client,
+      promptVersions: this.getClientPromptVersions(client.code),
+    };
   }
 
-  public saveClient(clientData: Partial<ClientConfig>): ClientConfig {
+  public getClientPromptVersions(clientCodeOrId: string): ClientPromptVersion[] {
+    if (!clientCodeOrId) return [];
+    const search = clientCodeOrId.trim().toUpperCase();
+    const client = this.data.clients.find((c) => c.code.trim().toUpperCase() === search || c.id === clientCodeOrId);
+    const targetCode = client ? client.code.trim().toUpperCase() : search;
+    const targetId = client ? client.id : clientCodeOrId;
+
+    return (this.data.clientPrompts || []).filter(
+      (cp) => cp.clientId === targetId || cp.clientCode.trim().toUpperCase() === targetCode
+    );
+  }
+
+  public saveClient(clientData: Partial<ClientConfig>, createdBy: string = 'Admin User'): ClientConfig {
     const code = clientData.code?.trim().toUpperCase() || 'CLIENT_' + Date.now();
-    const existingIndex = this.data.clients.findIndex((c) => c.code.trim().toUpperCase() === code);
+    const existingIndex = this.data.clients.findIndex((c) => c.code.trim().toUpperCase() === code || (clientData.id && c.id === clientData.id));
+
+    const existingClient = existingIndex >= 0 ? this.data.clients[existingIndex] : undefined;
+    const isNew = !existingClient;
+
+    let currentPromptVersion = existingClient?.promptVersion || 1;
+    const newPromptText = clientData.globalPrompt !== undefined ? clientData.globalPrompt : (existingClient?.globalPrompt || '');
+
+    const promptChanged = isNew || (existingClient && existingClient.globalPrompt !== newPromptText);
+
+    const clientId = existingClient?.id || clientData.id || `cli_${Date.now()}`;
+
+    if (!Array.isArray(this.data.clientPrompts)) {
+      this.data.clientPrompts = [];
+    }
+
+    if (promptChanged && newPromptText && newPromptText.trim().length > 0) {
+      if (!isNew) {
+        const existingVersions = this.data.clientPrompts.filter((cp) => cp.clientId === clientId || cp.clientCode === code);
+        const maxV = existingVersions.reduce((max, cp) => Math.max(max, cp.version || 1), existingClient?.promptVersion || 1);
+        currentPromptVersion = maxV + 1;
+      }
+
+      // Deactivate prior versions
+      this.data.clientPrompts.forEach((cp) => {
+        if (cp.clientId === clientId || cp.clientCode === code) {
+          cp.isActive = false;
+        }
+      });
+
+      // Insert active prompt version
+      this.data.clientPrompts.push({
+        id: `cpv_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        clientId,
+        clientCode: code,
+        promptType: 'TRANSCRIPT_EDITING',
+        promptText: newPromptText,
+        version: currentPromptVersion,
+        isActive: true,
+        createdBy,
+        createdAt: new Date().toISOString(),
+      });
+    }
 
     const updated: ClientConfig = {
-      id: clientData.id || `cli_${Date.now()}`,
-      name: clientData.name || 'New Client',
+      id: clientId,
+      name: clientData.name || existingClient?.name || 'New Client',
       code,
-      globalPrompt: clientData.globalPrompt || '',
-      qualificationCriteria: clientData.qualificationCriteria || '',
-      isActive: clientData.isActive ?? true,
-      createdAt: clientData.createdAt || new Date().toISOString(),
+      globalPrompt: newPromptText,
+      qualificationCriteria: clientData.qualificationCriteria !== undefined ? clientData.qualificationCriteria : (existingClient?.qualificationCriteria || ''),
+      isActive: clientData.isActive ?? existingClient?.isActive ?? true,
+      autoSyncEnabled: clientData.autoSyncEnabled ?? existingClient?.autoSyncEnabled ?? true,
+      autoProcessingEnabled: clientData.autoProcessingEnabled ?? existingClient?.autoProcessingEnabled ?? true,
+      allowClientPromptFallback: clientData.allowClientPromptFallback ?? existingClient?.allowClientPromptFallback ?? true,
+      promptVersion: currentPromptVersion,
+      createdAt: existingClient?.createdAt || clientData.createdAt || new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
 
     if (existingIndex >= 0) {
-      this.data.clients[existingIndex] = { ...this.data.clients[existingIndex], ...updated };
+      this.data.clients[existingIndex] = updated;
     } else {
       this.data.clients.push(updated);
     }
     this.persist();
-    return updated;
+    return {
+      ...updated,
+      promptVersions: this.getClientPromptVersions(updated.code),
+    };
   }
 
   public deleteClient(code: string): boolean {
@@ -358,28 +426,63 @@ export class LocalDbStore {
     if (autoPersist) this.persist();
   }
 
-  public replacePendingLeadsAndJobs(newLeads: CrmLeadItem[], newJobs: ProcessingJobItem[]): void {
+  public upsertLeadsAndSyncJobs(newLeads: CrmLeadItem[], newJobs: ProcessingJobItem[]): void {
+    const existingLeadsMap = new Map<string, CrmLeadItem>();
+    this.data.leads.forEach((l) => {
+      existingLeadsMap.set(l.leadRef, l);
+    });
+
     const existingJobsMap = new Map<string, ProcessingJobItem>();
     this.data.jobs.forEach((j) => {
       existingJobsMap.set(j.leadRef, j);
     });
 
-    const mergedJobs = newJobs.map((nj) => {
-      const existing = existingJobsMap.get(nj.leadRef);
+    // Upsert all CRM leads while preserving existing local metadata
+    newLeads.forEach((nl) => {
+      const existing = existingLeadsMap.get(nl.leadRef);
       if (existing) {
-        return {
-          ...nj,
+        existingLeadsMap.set(nl.leadRef, {
           ...existing,
-          leadId: nj.leadId,
-          updatedAt: new Date().toISOString(),
-        };
+          ...nl,
+          recordings: (nl.recordings && nl.recordings.length > 0) ? nl.recordings : existing.recordings,
+          syncedAt: new Date().toISOString(),
+        });
+      } else {
+        existingLeadsMap.set(nl.leadRef, nl);
       }
-      return nj;
     });
 
-    this.data.leads = newLeads;
-    this.data.jobs = mergedJobs;
+    // Sync queue jobs: only add new job if no job already exists for the lead
+    newJobs.forEach((nj) => {
+      const existingJob = existingJobsMap.get(nj.leadRef);
+      if (!existingJob) {
+        existingJobsMap.set(nj.leadRef, nj);
+      }
+    });
+
+    this.data.leads = Array.from(existingLeadsMap.values());
+    this.data.jobs = Array.from(existingJobsMap.values());
     this.persist();
+  }
+
+  public replacePendingLeadsAndJobs(newLeads: CrmLeadItem[], newJobs: ProcessingJobItem[]): void {
+    this.upsertLeadsAndSyncJobs(newLeads, newJobs);
+  }
+
+  public isQueueEligible(lead: CrmLeadItem, job?: ProcessingJobItem): boolean {
+    const rawStatus = (
+      lead.qaStatusCrm ||
+      lead.rawLeadData?.qa_status ||
+      lead.rawLeadData?.quality_status ||
+      ''
+    ).toString().trim().toLowerCase();
+
+    const isPendingQa = rawStatus.includes('pending');
+    const hasRecording = !!(lead.recordingUrl || (lead.recordings && lead.recordings.length > 0));
+    const isCompleted = job?.status === 'COMPLETED' || !!job?.editedTranscript;
+    const isActiveOrQueued = job && ['PENDING', 'QUEUED', 'AUDIO_RETRIEVED', 'TRANSCRIBING', 'AI_EDITING', 'QA_EVALUATING'].includes(job.status);
+
+    return isPendingQa && hasRecording && !isCompleted && !isActiveOrQueued;
   }
 
   public getLeadByRef(leadRef: string): CrmLeadItem | undefined {
