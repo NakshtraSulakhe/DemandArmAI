@@ -137,10 +137,11 @@ export default function Home() {
   }, []);
 
   // Fetch Queue data
-  const fetchQueueData = useCallback(async () => {
+  const fetchQueueData = useCallback(async (tabOverride?: 'active' | 'failed' | 'completed') => {
     try {
+      const targetTab = tabOverride || queueTab;
       const url = new URL('/api/queue', window.location.href);
-      url.searchParams.set('tab', queueTab);
+      url.searchParams.set('tab', targetTab);
       if (selectedClientCode !== 'ALL') url.searchParams.set('clientCode', selectedClientCode);
       if (selectedCampaignCode !== 'ALL') url.searchParams.set('campaignCode', selectedCampaignCode);
       if (searchQuery) url.searchParams.set('search', searchQuery);
@@ -251,7 +252,7 @@ export default function Home() {
   useEffect(() => {
     fetchJobs();
     updateQueueBadge();
-  }, [fetchJobs, updateQueueBadge]);
+  }, [fetchJobs, updateQueueBadge, queueTab, activeTab]);
 
   // UI Live Polling Interval (Refreshes data every 10 seconds)
   const fetchJobsRef = React.useRef(fetchJobs);
@@ -467,6 +468,7 @@ export default function Home() {
               onTabChange={(tab) => {
                 setQueueTab(tab);
                 setCurrentPage(1);
+                fetchQueueData(tab);
               }}
               selectedClientCode={selectedClientCode}
               setSelectedClientCode={handleClientCodeChange}

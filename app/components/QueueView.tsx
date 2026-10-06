@@ -198,47 +198,50 @@ export default function QueueView({
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between p-4 border-b border-slate-800/40 gap-4 bg-slate-950/40">
           <div className="flex items-center gap-2 p-1 bg-slate-950/80 rounded-xl border border-slate-800/60">
             <button
+              type="button"
               onClick={() => onTabChange('active')}
-              className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+              className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer select-none ${
                 selectedTab === 'active'
                   ? 'bg-blue-600 text-white shadow-md shadow-blue-600/25'
                   : 'text-slate-400 hover:text-slate-200'
               }`}
             >
-              <Activity className="w-3.5 h-3.5" />
-              Active Queue
-              <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-slate-900 text-blue-300 ml-1">
+              <Activity className="w-3.5 h-3.5 pointer-events-none" />
+              <span className="pointer-events-none">Active Queue</span>
+              <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-slate-900 text-blue-300 ml-1 pointer-events-none">
                 {queueStats.activeCount}
               </span>
             </button>
 
             <button
+              type="button"
               onClick={() => onTabChange('failed')}
-              className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+              className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer select-none ${
                 selectedTab === 'failed'
                   ? 'bg-rose-600 text-white shadow-md shadow-rose-600/25'
                   : 'text-slate-400 hover:text-slate-200'
               }`}
             >
-              <AlertTriangle className="w-3.5 h-3.5" />
-              Failed
+              <AlertTriangle className="w-3.5 h-3.5 pointer-events-none" />
+              <span className="pointer-events-none">Failed</span>
               {queueStats.failedCount > 0 && (
-                <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-rose-950 text-rose-300 ml-1">
+                <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-rose-950 text-rose-300 ml-1 pointer-events-none">
                   {queueStats.failedCount}
                 </span>
               )}
             </button>
 
             <button
+              type="button"
               onClick={() => onTabChange('completed')}
-              className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+              className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer select-none ${
                 selectedTab === 'completed'
                   ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/25'
                   : 'text-slate-400 hover:text-slate-200'
               }`}
             >
-              <CheckCircle2 className="w-3.5 h-3.5" />
-              Completed History
+              <CheckCircle2 className="w-3.5 h-3.5 pointer-events-none" />
+              <span className="pointer-events-none">Completed History</span>
             </button>
           </div>
 
