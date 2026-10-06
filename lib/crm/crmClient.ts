@@ -1,4 +1,5 @@
 import { dbStore } from '../db/store';
+import { crmSyncWorker } from './crmSyncWorker';
 import { CrmLeadItem, ProcessingJobItem, CrmRecordingItem, CampaignConfig } from '../types';
 
 export interface CrmSyncResult {
@@ -21,9 +22,7 @@ export class CrmClient {
   }
 
   public ensureAutoSyncStarted(): void {
-    // Automatic GET API polling is disabled to prevent server load & "too many requests" errors.
-    // Lead ingestion is handled 100% real-time via Webhooks (/api/webhooks/lead).
-    return;
+    crmSyncWorker.ensureAutoSyncStarted();
   }
 
   /**

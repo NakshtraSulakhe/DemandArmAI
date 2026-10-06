@@ -232,3 +232,32 @@ export interface AnalyticsSummary {
   campaignAnalytics: { campaignCode: string; campaignName: string; count: number }[];
   statusDistribution: { status: string; count: number }[];
 }
+
+export interface ClientSyncMetrics {
+  clientCode: string;
+  clientName?: string;
+  status: 'IDLE' | 'RUNNING' | 'SUCCESS' | 'FAILED' | 'SKIPPED';
+  lastSyncType: 'FAST' | 'RECONCILIATION';
+  lastStartedAt?: string;
+  lastCompletedAt?: string;
+  lastSuccessAt?: string;
+  lastErrorAt?: string;
+  lastError?: string;
+  recordsFetched: number;
+  recordsInserted: number;
+  recordsUpdated: number;
+  recordsSkipped: number;
+  newJobsCreated: number;
+  pagesProcessed: number;
+  durationMs: number;
+}
+
+export interface CrmSyncMetricsState {
+  globalStatus: 'IDLE' | 'RUNNING' | 'BACKOFF' | 'FAILED';
+  currentSyncIntervalMinutes: number;
+  consecutiveFailures: number;
+  lastFastSyncAt?: string;
+  lastReconciliationSyncAt?: string;
+  activeClientCodes: string[];
+  clientMetrics: Record<string, ClientSyncMetrics>;
+}

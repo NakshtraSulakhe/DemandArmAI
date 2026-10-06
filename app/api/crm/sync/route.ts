@@ -1,25 +1,29 @@
 import { NextResponse } from 'next/server';
-import { crmClient } from '../../../../lib/crm/crmClient';
-import { jobWorker } from '../../../../lib/jobs/jobWorker';
-import { dbStore } from '../../../../lib/db/store';
+import { crmSyncWorker } from '@/lib/crm/crmSyncWorker';
 
-export async function POST() {
+export async function GET() {
   try {
-    const syncResult = await crmClient.syncLeads();
-    dbStore.addAuditLog(
-      undefined,
-      'CRM_SYNC_EXECUTED',
-      `Synchronized ${syncResult.fetchedCount} matching leads from CRM. ${syncResult.newLeadsCount} new leads, ${syncResult.newJobsCount} new jobs enqueued.`
-    );
-
-    // Run job queue processing asynchronously in background without blocking response
-    jobWorker.processQueue(10).catch((err) => console.error('Background worker error during sync:', err));
-
+    crmSyncWorker.ensureAutoSyncStarted();
+    const metrics = crmSyncWorker.getSyncMetrics();
     return NextResponse.json({
       success: true,
-      syncResult,
+      metrics,
     });
   } catch (err: any) {
     return NextResponse.json({ success: false, error: err.message }, { status: 500 });
   }
 }
+
+export async function POST() {
+  try {
+    crmSyncWorker.ensureAutoSyncStarted();
+    const metrics = await crmSyncWorker.runFastSync();
+    return NextResponse.json({
+      success: true,
+      metrics,
+    });
+  } catch (err: any) {
+    return NextResponse.json({ success: false, error: err.message }, { status: 500 });
+  }
+}
+
