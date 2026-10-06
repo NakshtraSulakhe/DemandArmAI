@@ -115,16 +115,12 @@ export default function SettingsView({ onSettingsUpdated, onSyncCrm }: SettingsV
   const fetchSettings = async () => {
     setIsLoading(true);
     try {
-      const [settingsRes, logsRes] = await Promise.all([
-        fetch('/api/settings'),
-        fetch('/api/audit-logs?limit=50'),
-      ]);
-
+      const settingsRes = await fetch('/api/settings');
       const data = await settingsRes.json();
       if (data.success && data.settings) {
         const s: SettingsData = data.settings;
         setSettingsData(s);
-        setGeminiModel(s.gemini?.model || 'gemini-3.6-flash');
+        setGeminiModel(s.gemini?.model || 'gemini-3.8-flash');
         setGeminiTemp(s.gemini?.temperature ?? 0.2);
         setGeminiMaxTokens(s.gemini?.maxTokens || 8192);
 
@@ -141,13 +137,18 @@ export default function SettingsView({ onSettingsUpdated, onSyncCrm }: SettingsV
         setAutoQaEvaluation(s.autoQaEvaluation ?? true);
         setAudioRetentionDays(s.audioRetentionDays || 90);
       }
+    } catch (err) {
+      console.error('Error fetching settings:', err);
+    }
 
+    try {
+      const logsRes = await fetch('/api/audit-logs?limit=50');
       const logsData = await logsRes.json();
       if (logsData.success && Array.isArray(logsData.logs)) {
         setAuditLogs(logsData.logs);
       }
-    } catch (err) {
-      console.error('Error fetching settings:', err);
+    } catch (logErr) {
+      console.warn('Error fetching audit logs:', logErr);
     } finally {
       setIsLoading(false);
     }

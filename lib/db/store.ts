@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { prisma } from './prisma';
 import {
   ClientConfig,
   CampaignConfig,
@@ -52,111 +53,47 @@ const DEFAULT_SETTINGS: SystemSettingsConfig = {
   updatedAt: new Date().toISOString(),
 };
 
-const INITIAL_CLIENTS: ClientConfig[] = [
-  {
-    id: 'cli_1020',
-    name: 'Software Finder',
-    code: '1020',
-    globalPrompt: `You are an expert sales call transcript editor for Software Finder.
-Format the edited transcript cleanly with clear speaker labels ([Sales Rep] / [Prospect Name]).
-Remove filler words like "um", "uh", "you know", "like" while strictly preserving software implementation timelines, user seat counts, pricing numbers, product features, and client commitments.
-Do NOT fabricate any statements. Preserve verbatim customer objections and feature requests.`,
-    qualificationCriteria: `1. Verification of prospect name, company, and decision-maker role.
-2. Discussion of software integration requirements or LMS implementation.
-3. Target implementation timeline identified (e.g. 3-6 months, 6-12 months).
-4. Follow-up action or demo agreed upon.`,
-    isActive: true,
-    createdAt: new Date(Date.now() - 86400000 * 5).toISOString(),
-    updatedAt: new Date().toISOString(),
-  },
-  {
-    id: 'cli_1010',
-    name: 'Enterprise Tech Solutions 1010',
-    code: '1010',
-    globalPrompt: `You are an enterprise sales transcript editor for Client 1010.
-Ensure technical terms, Zero-Trust compliance markers, and cloud workload metrics are captured accurately.
-Maintain precise numbers, budget ranges, and compliance mandates mentioned by the prospect.
-Never infer consent or interest that was not explicitly voiced by the customer.`,
-    qualificationCriteria: `1. Confirmed decision maker (VP / CISO / Director level).
-2. Cloud infrastructure or cybersecurity need identified.
-3. Implementation timeline within 6 months.
-4. Demo or follow-up technical review scheduled.`,
-    isActive: true,
-    createdAt: new Date(Date.now() - 86400000 * 4).toISOString(),
-    updatedAt: new Date().toISOString(),
-  },
-  {
-    id: 'cli_1030',
-    name: 'Healthcare Informatics 1030',
-    code: '1030',
-    globalPrompt: `You are a compliance-focused transcript editor for Client 1030.
-Ensure all HIPAA compliance markers, EHR integrations (Epic, Cerner), and medical software features discussed are captured accurately.
-Maintain precise numbers, seats, and budget ranges.`,
-    qualificationCriteria: `1. Verified prospect is a decision maker at a healthcare provider or hospital network.
-2. Discussion of patient data management or EHR integration.
-3. Implementation timeframe defined.
-4. Next step defined with specific target timeline.`,
-    isActive: true,
-    createdAt: new Date(Date.now() - 86400000 * 3).toISOString(),
-    updatedAt: new Date().toISOString(),
-  },
-];
-
-const INITIAL_CAMPAIGNS: CampaignConfig[] = [
-  {
-    id: 'cmp_tg_1020_004',
-    name: 'LMS Software Campaign',
-    code: 'TG-1020-004',
-    clientCode: '1020',
-    assetTitle: 'LMS Software Enterprise Suite',
-    valueProps: [
-      'Real-time LMS & HRIS Data Integration',
-      'Automated Student & Employee Onboarding Tracking',
-      '99.9% Uptime with SOC2 Data Compliance',
-    ],
-    additionalEditingInstructions: `Capitalize LMS Software, HRIS Integration, and Learning Analytics correctly. Ensure implementation timeline mentioned (e.g. 3-6 months) is accurately preserved.`,
-    qualificationRulesOverride: `Prospect must manage active training or software implementation requirements.`,
-    isActive: true,
-    createdAt: new Date(Date.now() - 86400000 * 4).toISOString(),
-    updatedAt: new Date().toISOString(),
-  },
-  {
-    id: 'cmp_tg_1010_001',
-    name: 'CloudShield Zero Trust',
-    code: 'TG-1010-001',
-    clientCode: '1010',
-    assetTitle: 'CloudShield Enterprise Architecture Briefing',
-    valueProps: [
-      'Automated Zero-Trust Micro-segmentation',
-      '99.999% SLA with multi-region failover',
-    ],
-    additionalEditingInstructions: `Capitalize Zero-Trust Architecture and IAM Policy Engine correctly.`,
-    qualificationRulesOverride: `Must confirm prospect cloud workload infrastructure fit.`,
-    isActive: true,
-    createdAt: new Date(Date.now() - 86400000 * 3).toISOString(),
-    updatedAt: new Date().toISOString(),
-  },
-  {
-    id: 'cmp_tg_1030_002',
-    name: 'Healthcare EHR Data Sync',
-    code: 'TG-1030-002',
-    clientCode: '1030',
-    assetTitle: 'FinHealth Interoperability Engine',
-    valueProps: [
-      'Epic & Cerner HL7/FHIR Data Sync',
-      'Real-time insurance verification',
-    ],
-    additionalEditingInstructions: `Ensure Epic, Cerner, HL7, and FHIR are capitalized properly.`,
-    qualificationRulesOverride: `Prospect must manage hospital or healthcare clinic network.`,
-    isActive: true,
-    createdAt: new Date(Date.now() - 86400000 * 2).toISOString(),
-    updatedAt: new Date().toISOString(),
-  },
-];
-
+const INITIAL_CLIENTS: ClientConfig[] = [];
+const INITIAL_CAMPAIGNS: CampaignConfig[] = [];
 const INITIAL_LEADS: CrmLeadItem[] = [];
 const INITIAL_JOBS: ProcessingJobItem[] = [];
 const INITIAL_AUDIT_LOGS: AuditLogItem[] = [];
+
+function safeParseJson<T>(val: any, fallback: T): T {
+  if (!val) return fallback;
+  if (typeof val === 'object') return val as T;
+  try {
+    return JSON.parse(val) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+function safeStringify(val: any): string {
+  if (val === null || val === undefined) return '';
+  if (typeof val === 'string') return val;
+  try {
+    return JSON.stringify(val);
+  } catch {
+    return String(val);
+  }
+}
+
+async function withDbTimeout<T>(promise: Promise<T>, timeoutMs: number = 2500): Promise<T | null> {
+  let timer: NodeJS.Timeout;
+  const timeoutPromise = new Promise<null>((resolve) => {
+    timer = setTimeout(() => resolve(null), timeoutMs);
+  });
+  try {
+    const res = await Promise.race([promise, timeoutPromise]);
+    return res;
+  } catch (e) {
+    console.warn('Prisma DB connection timeout or error:', e);
+    return null;
+  } finally {
+    clearTimeout(timer!);
+  }
+}
 
 export class LocalDbStore {
   private static instance: LocalDbStore;
@@ -167,8 +104,11 @@ export class LocalDbStore {
     leads: [],
     jobs: [],
     auditLogs: [],
+    clientPrompts: [],
     settings: DEFAULT_SETTINGS,
   };
+
+  private isDbInitialized = false;
 
   private constructor() {
     this.init();
@@ -188,61 +128,439 @@ export class LocalDbStore {
       }
 
       if (fs.existsSync(STORE_FILE)) {
-        const raw = fs.readFileSync(STORE_FILE, 'utf-8');
-        this.data = JSON.parse(raw);
-        // Ensure default settings URL is live CRM endpoint and model is gemini-3.8-flash
-        if (!this.data.settings || !this.data.settings.crmEndpoint || this.data.settings.crmEndpoint.includes('mock-server')) {
-          this.data.settings = { ...DEFAULT_SETTINGS, ...(this.data.settings || {}), crmEndpoint: DEFAULT_SETTINGS.crmEndpoint };
+        const raw = fs.readFileSync(STORE_FILE, 'utf-8').trim();
+        if (raw) {
+          this.data = JSON.parse(raw);
         }
-        if (this.data.settings && (!this.data.settings.geminiModel || this.data.settings.geminiModel.includes('2.5-flash') || this.data.settings.geminiModel.includes('3.6-flash') || this.data.settings.geminiModel.includes('-high'))) {
-          this.data.settings.geminiModel = 'gemini-3.8-flash';
-        }
-        if (!Array.isArray(this.data.clientPrompts)) {
-          this.data.clientPrompts = [];
-        }
-        // Cap audit logs to max 300 items to keep store lightweight and ultrafast
-        if (Array.isArray(this.data.auditLogs) && this.data.auditLogs.length > 300) {
-          this.data.auditLogs = this.data.auditLogs.slice(0, 300);
-        }
-        this.persist();
-      } else {
-        this.data = {
-          clients: INITIAL_CLIENTS,
-          campaigns: INITIAL_CAMPAIGNS,
-          leads: INITIAL_LEADS,
-          jobs: INITIAL_JOBS,
-          auditLogs: INITIAL_AUDIT_LOGS,
-          clientPrompts: [],
-          settings: DEFAULT_SETTINGS,
-        };
-        this.persist();
       }
     } catch (e) {
-      console.error('Error initializing store file:', e);
-      this.data = {
-        clients: INITIAL_CLIENTS,
-        campaigns: INITIAL_CAMPAIGNS,
-        leads: INITIAL_LEADS,
-        jobs: INITIAL_JOBS,
-        auditLogs: INITIAL_AUDIT_LOGS,
-        clientPrompts: [],
-        settings: DEFAULT_SETTINGS,
-      };
+      console.error('Local JSON init fallback error:', e);
+    }
+
+    // Hydrate & Sync asynchronously from Prisma DB with timeout protection
+    this.syncFromDb().catch((err) => {
+      console.warn('Failed async initial DB sync:', err);
+    });
+  }
+
+  public async syncFromDb(): Promise<void> {
+    try {
+      // System Settings
+      const dbSettings = await withDbTimeout(prisma.systemSettings.findUnique({ where: { id: 'global' } }));
+      if (dbSettings) {
+        this.data.settings = {
+          id: dbSettings.id,
+          crmEndpoint: dbSettings.crmEndpoint,
+          crmApiKey: dbSettings.crmApiKey,
+          sttProvider: 'gemini',
+          sttApiKey: '',
+          gcsBucketName: dbSettings.gcsBucketName,
+          gcpProjectId: dbSettings.gcpProjectId,
+          gcpClientEmail: dbSettings.gcpClientEmail,
+          gcpPrivateKey: dbSettings.gcpPrivateKey,
+          sttLanguageCode: dbSettings.sttLanguageCode,
+          sttModel: dbSettings.sttModel,
+          sttDiarizationEnabled: dbSettings.sttDiarizationEnabled,
+          geminiApiKey: dbSettings.geminiApiKey,
+          geminiModel: dbSettings.geminiModel,
+          geminiTemperature: dbSettings.geminiTemperature,
+          geminiMaxTokens: dbSettings.geminiMaxTokens,
+          maxConcurrency: dbSettings.maxConcurrency,
+          autoSyncInterval: dbSettings.autoSyncInterval,
+          autoGenerateTranscripts: dbSettings.autoGenerateTranscripts,
+          autoQaEvaluation: dbSettings.autoQaEvaluation,
+          isProcessingPaused: false,
+          audioRetentionDays: dbSettings.audioRetentionDays,
+          sttCostPerMinute: dbSettings.sttCostPerMinute,
+          geminiInputCostPer1M: dbSettings.geminiInputCostPer1M,
+          geminiOutputCostPer1M: dbSettings.geminiOutputCostPer1M,
+          updatedAt: dbSettings.updatedAt.toISOString(),
+        };
+      }
+
+      // Clients
+      const dbClients = await withDbTimeout(prisma.client.findMany({ include: { campaigns: true } }));
+      if (dbClients && dbClients.length > 0) {
+        this.data.clients = dbClients.map((c) => ({
+          id: c.id,
+          name: c.name,
+          code: c.code,
+          globalPrompt: c.globalPrompt,
+          qualificationCriteria: c.qualificationCriteria,
+          isActive: c.isActive,
+          createdAt: c.createdAt.toISOString(),
+          updatedAt: c.updatedAt.toISOString(),
+        }));
+      }
+
+      // Campaigns
+      const dbCampaigns = await withDbTimeout(prisma.campaign.findMany());
+      if (dbCampaigns && dbCampaigns.length > 0) {
+        this.data.campaigns = dbCampaigns.map((cmp) => ({
+          id: cmp.id,
+          name: cmp.name,
+          code: cmp.code,
+          clientCode: cmp.clientCode,
+          assetTitle: cmp.assetTitle,
+          valueProps: safeParseJson<string[]>(cmp.valueProps, []),
+          additionalEditingInstructions: cmp.additionalEditingInstructions,
+          qualificationRulesOverride: cmp.qualificationRulesOverride || '',
+          isActive: cmp.isActive,
+          createdAt: cmp.createdAt.toISOString(),
+          updatedAt: cmp.updatedAt.toISOString(),
+        }));
+      } else if (INITIAL_CAMPAIGNS.length > 0) {
+        for (const cmp of INITIAL_CAMPAIGNS) {
+          await this.persistCampaignToDb(cmp);
+        }
+      }
+
+      // Client Prompt Versions
+      const dbPrompts = await withDbTimeout(prisma.clientPromptVersion.findMany());
+      if (dbPrompts && dbPrompts.length > 0) {
+        this.data.clientPrompts = dbPrompts.map((p) => ({
+          id: p.id,
+          clientId: p.clientCode,
+          clientCode: p.clientCode,
+          promptType: 'TRANSCRIPT_EDITING' as const,
+          promptText: p.promptText,
+          qualificationCriteria: p.qualificationCriteria,
+          version: p.version,
+          createdBy: p.createdBy,
+          createdAt: p.createdAt.toISOString(),
+          isActive: true,
+        }));
+      }
+
+      // CRM Leads
+      const dbLeads = await withDbTimeout(prisma.crmLead.findMany());
+      if (dbLeads) {
+        this.data.leads = dbLeads.map((l) => ({
+          id: l.id,
+          leadRef: l.leadRef,
+          clientCode: l.clientCode,
+          campaignCode: l.campaignCode,
+          campaignName: l.campaignName || '',
+          agentId: l.agentId || '',
+          agentName: l.agentName || '',
+          contactName: l.contactName,
+          companyName: l.companyName,
+          companySize: l.companySize || '',
+          industry: l.industry || '',
+          country: l.country || '',
+          jobTitle: l.jobTitle || '',
+          email: l.email || '',
+          phone: l.phone || '',
+          recordingUrl: l.recordingUrl,
+          qaStatusCrm: l.qaStatusCrm || 'Pending',
+          rawLeadData: safeParseJson<any>(l.rawLeadData, null),
+          syncedAt: l.syncedAt.toISOString(),
+          createdAt: l.createdAt.toISOString(),
+          updatedAt: l.updatedAt.toISOString(),
+        }));
+      }
+
+      // Processing Jobs
+      const dbJobs = await withDbTimeout(prisma.processingJob.findMany());
+      if (dbJobs) {
+        this.data.jobs = dbJobs.map((j) => ({
+          id: j.id,
+          leadId: j.leadId,
+          leadRef: j.leadRef,
+          status: j.status as any,
+          stepError: j.stepError || undefined,
+          gcsAudioUri: j.gcsAudioUri || undefined,
+          rawTranscript: safeParseJson<any>(j.rawTranscript, j.rawTranscript || undefined),
+          editedTranscript: safeParseJson<any>(j.editedTranscript, j.editedTranscript || undefined),
+          promptVersionUsed: j.promptVersionUsed || undefined,
+          qaStatus: (j.qaStatus as any) || undefined,
+          qaResultJson: safeParseJson<any>(j.qaResultJson, j.qaResultJson || undefined),
+          manualOverrideStatus: (j.manualOverrideStatus as any) || undefined,
+          manualOverrideNotes: j.manualOverrideNotes || undefined,
+          reviewedBy: j.reviewedBy || undefined,
+          reviewedAt: j.reviewedAt ? j.reviewedAt.toISOString() : undefined,
+          attempts: j.attempts,
+          createdAt: j.createdAt.toISOString(),
+          updatedAt: j.updatedAt.toISOString(),
+        }));
+      }
+
+      // Audit Logs
+      const dbAuditLogs = await withDbTimeout(prisma.auditLog.findMany({ take: 300, orderBy: { timestamp: 'desc' } }));
+      if (dbAuditLogs) {
+        this.data.auditLogs = dbAuditLogs.map((a) => ({
+          id: a.id,
+          jobId: a.jobId || undefined,
+          action: a.action,
+          details: a.details,
+          timestamp: a.timestamp.toISOString(),
+        }));
+      }
+
+      this.isDbInitialized = true;
+      this.persistLocalFile();
+    } catch (err) {
+      console.error('Error syncing store from Prisma database:', err);
     }
   }
 
-  private persist() {
+  private persistLocalFile() {
     try {
       if (!fs.existsSync(DATA_DIR)) {
         fs.mkdirSync(DATA_DIR, { recursive: true });
       }
       fs.writeFileSync(STORE_FILE, JSON.stringify(this.data, null, 2), 'utf-8');
     } catch (e) {
-      console.error('Failed to persist db_store.json:', e);
+      console.error('Error writing store file backup:', e);
     }
   }
 
-  // Settings
+  private persist() {
+    this.persistLocalFile();
+  }
+
+  // Database Persistence Helpers
+  private async persistSettingsToDb(settings: SystemSettingsConfig): Promise<void> {
+    try {
+      await prisma.systemSettings.upsert({
+        where: { id: 'global' },
+        update: {
+          crmEndpoint: settings.crmEndpoint,
+          crmApiKey: settings.crmApiKey,
+          gcsBucketName: settings.gcsBucketName,
+          gcpProjectId: settings.gcpProjectId,
+          gcpClientEmail: settings.gcpClientEmail,
+          gcpPrivateKey: settings.gcpPrivateKey,
+          sttLanguageCode: settings.sttLanguageCode,
+          sttModel: settings.sttModel,
+          sttDiarizationEnabled: settings.sttDiarizationEnabled,
+          geminiApiKey: settings.geminiApiKey,
+          geminiModel: settings.geminiModel,
+          geminiTemperature: settings.geminiTemperature,
+          geminiMaxTokens: settings.geminiMaxTokens,
+          maxConcurrency: settings.maxConcurrency,
+          autoSyncInterval: settings.autoSyncInterval,
+          autoGenerateTranscripts: settings.autoGenerateTranscripts,
+          autoQaEvaluation: settings.autoQaEvaluation,
+          audioRetentionDays: settings.audioRetentionDays,
+          sttCostPerMinute: settings.sttCostPerMinute,
+          geminiInputCostPer1M: settings.geminiInputCostPer1M,
+          geminiOutputCostPer1M: settings.geminiOutputCostPer1M,
+        },
+        create: {
+          id: 'global',
+          crmEndpoint: settings.crmEndpoint,
+          crmApiKey: settings.crmApiKey,
+          gcsBucketName: settings.gcsBucketName,
+          gcpProjectId: settings.gcpProjectId,
+          gcpClientEmail: settings.gcpClientEmail,
+          gcpPrivateKey: settings.gcpPrivateKey,
+          sttLanguageCode: settings.sttLanguageCode,
+          sttModel: settings.sttModel,
+          sttDiarizationEnabled: settings.sttDiarizationEnabled,
+          geminiApiKey: settings.geminiApiKey,
+          geminiModel: settings.geminiModel,
+          geminiTemperature: settings.geminiTemperature,
+          geminiMaxTokens: settings.geminiMaxTokens,
+          maxConcurrency: settings.maxConcurrency,
+          autoSyncInterval: settings.autoSyncInterval,
+          autoGenerateTranscripts: settings.autoGenerateTranscripts,
+          autoQaEvaluation: settings.autoQaEvaluation,
+          audioRetentionDays: settings.audioRetentionDays,
+          sttCostPerMinute: settings.sttCostPerMinute,
+          geminiInputCostPer1M: settings.geminiInputCostPer1M,
+          geminiOutputCostPer1M: settings.geminiOutputCostPer1M,
+        },
+      });
+    } catch (e) {
+      console.error('Prisma persistSettings error:', e);
+    }
+  }
+
+  private async persistClientToDb(client: ClientConfig): Promise<void> {
+    try {
+      await prisma.client.upsert({
+        where: { code: client.code },
+        update: {
+          name: client.name,
+          globalPrompt: client.globalPrompt,
+          qualificationCriteria: client.qualificationCriteria,
+          isActive: client.isActive,
+        },
+        create: {
+          id: client.id,
+          name: client.name,
+          code: client.code,
+          globalPrompt: client.globalPrompt,
+          qualificationCriteria: client.qualificationCriteria,
+          isActive: client.isActive,
+        },
+      });
+    } catch (e) {
+      console.error('Prisma persistClient error:', e);
+    }
+  }
+
+  private async persistCampaignToDb(cmp: CampaignConfig): Promise<void> {
+    try {
+      await prisma.campaign.upsert({
+        where: { code: cmp.code },
+        update: {
+          name: cmp.name,
+          clientCode: cmp.clientCode,
+          assetTitle: cmp.assetTitle,
+          valueProps: safeStringify(cmp.valueProps),
+          additionalEditingInstructions: cmp.additionalEditingInstructions,
+          qualificationRulesOverride: cmp.qualificationRulesOverride || null,
+          isActive: cmp.isActive,
+        },
+        create: {
+          id: cmp.id,
+          name: cmp.name,
+          code: cmp.code,
+          clientCode: cmp.clientCode,
+          assetTitle: cmp.assetTitle,
+          valueProps: safeStringify(cmp.valueProps),
+          additionalEditingInstructions: cmp.additionalEditingInstructions,
+          qualificationRulesOverride: cmp.qualificationRulesOverride || null,
+          isActive: cmp.isActive,
+        },
+      });
+    } catch (e) {
+      console.error('Prisma persistCampaign error:', e);
+    }
+  }
+
+  private async persistLeadToDb(lead: CrmLeadItem): Promise<void> {
+    try {
+      await prisma.crmLead.upsert({
+        where: { leadRef: lead.leadRef },
+        update: {
+          clientCode: lead.clientCode,
+          campaignCode: lead.campaignCode,
+          campaignName: lead.campaignName || null,
+          agentId: lead.agentId || null,
+          agentName: lead.agentName || null,
+          contactName: lead.contactName,
+          companyName: lead.companyName,
+          companySize: lead.companySize || null,
+          industry: lead.industry || null,
+          country: lead.country || null,
+          jobTitle: lead.jobTitle || null,
+          email: lead.email || null,
+          phone: lead.phone || null,
+          recordingUrl: lead.recordingUrl || '',
+          qaStatusCrm: lead.qaStatusCrm || null,
+          rawLeadData: lead.rawLeadData ? safeStringify(lead.rawLeadData) : null,
+          syncedAt: new Date(lead.syncedAt || Date.now()),
+        },
+        create: {
+          id: lead.id || `lead_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+          leadRef: lead.leadRef,
+          clientCode: lead.clientCode,
+          campaignCode: lead.campaignCode,
+          campaignName: lead.campaignName || null,
+          agentId: lead.agentId || null,
+          agentName: lead.agentName || null,
+          contactName: lead.contactName,
+          companyName: lead.companyName,
+          companySize: lead.companySize || null,
+          industry: lead.industry || null,
+          country: lead.country || null,
+          jobTitle: lead.jobTitle || null,
+          email: lead.email || null,
+          phone: lead.phone || null,
+          recordingUrl: lead.recordingUrl || '',
+          qaStatusCrm: lead.qaStatusCrm || null,
+          rawLeadData: lead.rawLeadData ? safeStringify(lead.rawLeadData) : null,
+          syncedAt: new Date(lead.syncedAt || Date.now()),
+        },
+      });
+    } catch (e) {
+      console.error('Prisma persistLead error:', e);
+    }
+  }
+
+  private async persistJobToDb(job: ProcessingJobItem): Promise<void> {
+    try {
+      await prisma.processingJob.upsert({
+        where: { id: job.id },
+        update: {
+          leadId: job.leadId,
+          leadRef: job.leadRef,
+          status: job.status,
+          stepError: job.stepError || null,
+          gcsAudioUri: job.gcsAudioUri || null,
+          rawTranscript: job.rawTranscript ? safeStringify(job.rawTranscript) : null,
+          editedTranscript: job.editedTranscript ? safeStringify(job.editedTranscript) : null,
+          promptVersionUsed: job.promptVersionUsed || null,
+          qaStatus: job.qaStatus || null,
+          qaResultJson: job.qaResultJson ? safeStringify(job.qaResultJson) : null,
+          manualOverrideStatus: job.manualOverrideStatus || null,
+          manualOverrideNotes: job.manualOverrideNotes || null,
+          reviewedBy: job.reviewedBy || null,
+          reviewedAt: job.reviewedAt ? new Date(job.reviewedAt) : null,
+          attempts: job.attempts || 0,
+        },
+        create: {
+          id: job.id,
+          leadId: job.leadId,
+          leadRef: job.leadRef,
+          status: job.status,
+          stepError: job.stepError || null,
+          gcsAudioUri: job.gcsAudioUri || null,
+          rawTranscript: job.rawTranscript ? safeStringify(job.rawTranscript) : null,
+          editedTranscript: job.editedTranscript ? safeStringify(job.editedTranscript) : null,
+          promptVersionUsed: job.promptVersionUsed || null,
+          qaStatus: job.qaStatus || null,
+          qaResultJson: job.qaResultJson ? safeStringify(job.qaResultJson) : null,
+          manualOverrideStatus: job.manualOverrideStatus || null,
+          manualOverrideNotes: job.manualOverrideNotes || null,
+          reviewedBy: job.reviewedBy || null,
+          reviewedAt: job.reviewedAt ? new Date(job.reviewedAt) : null,
+          attempts: job.attempts || 0,
+        },
+      });
+    } catch (e) {
+      console.error('Prisma persistJob error:', e);
+    }
+  }
+
+  private async persistAuditLogToDb(log: AuditLogItem): Promise<void> {
+    try {
+      await prisma.auditLog.create({
+        data: {
+          id: log.id,
+          jobId: log.jobId || null,
+          action: log.action,
+          details: log.details,
+          timestamp: new Date(log.timestamp),
+        },
+      });
+    } catch (e) {
+      console.error('Prisma persistAuditLog error:', e);
+    }
+  }
+
+  private async persistPromptVersionToDb(pv: ClientPromptVersion): Promise<void> {
+    try {
+      await prisma.clientPromptVersion.create({
+        data: {
+          id: pv.id,
+          clientCode: pv.clientCode,
+          version: pv.version || 1,
+          promptText: pv.promptText,
+          qualificationCriteria: pv.qualificationCriteria || '',
+          createdBy: pv.createdBy || 'System Admin',
+          createdAt: new Date(pv.createdAt || Date.now()),
+        },
+      });
+    } catch (e) {
+      console.error('Prisma persistPromptVersion error:', e);
+    }
+  }
+
+  // System Settings
   public getSettings(): SystemSettingsConfig {
     return this.data.settings || DEFAULT_SETTINGS;
   }
@@ -254,6 +572,7 @@ export class LocalDbStore {
       updatedAt: new Date().toISOString(),
     };
     this.persist();
+    this.persistSettingsToDb(this.data.settings).catch(console.error);
     return this.data.settings;
   }
 
@@ -312,25 +631,26 @@ export class LocalDbStore {
         currentPromptVersion = maxV + 1;
       }
 
-      // Deactivate prior versions
       this.data.clientPrompts.forEach((cp) => {
         if (cp.clientId === clientId || cp.clientCode === code) {
           cp.isActive = false;
         }
       });
 
-      // Insert active prompt version
-      this.data.clientPrompts.push({
+      const newPv: ClientPromptVersion = {
         id: `cpv_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
         clientId,
         clientCode: code,
         promptType: 'TRANSCRIPT_EDITING',
         promptText: newPromptText,
+        qualificationCriteria: clientData.qualificationCriteria || existingClient?.qualificationCriteria || '',
         version: currentPromptVersion,
         isActive: true,
         createdBy,
         createdAt: new Date().toISOString(),
-      });
+      };
+      this.data.clientPrompts.push(newPv);
+      this.persistPromptVersionToDb(newPv).catch(console.error);
     }
 
     const updated: ClientConfig = {
@@ -354,6 +674,8 @@ export class LocalDbStore {
       this.data.clients.push(updated);
     }
     this.persist();
+    this.persistClientToDb(updated).catch(console.error);
+
     return {
       ...updated,
       promptVersions: this.getClientPromptVersions(updated.code),
@@ -365,6 +687,7 @@ export class LocalDbStore {
     this.data.clients = this.data.clients.filter((c) => c.code.trim().toUpperCase() !== code.trim().toUpperCase());
     this.data.campaigns = this.data.campaigns.filter((cmp) => cmp.clientCode.trim().toUpperCase() !== code.trim().toUpperCase());
     this.persist();
+    prisma.client.deleteMany({ where: { code: code.trim().toUpperCase() } }).catch(console.error);
     return this.data.clients.length < initialLen;
   }
 
@@ -404,7 +727,10 @@ export class LocalDbStore {
     } else {
       this.data.campaigns.push(updated);
     }
-    if (autoPersist) this.persist();
+    if (autoPersist) {
+      this.persist();
+      this.persistCampaignToDb(updated).catch(console.error);
+    }
     return updated;
   }
 
@@ -412,6 +738,7 @@ export class LocalDbStore {
     const initialLen = this.data.campaigns.length;
     this.data.campaigns = this.data.campaigns.filter((cmp) => cmp.code.trim().toUpperCase() !== code.trim().toUpperCase());
     this.persist();
+    prisma.campaign.deleteMany({ where: { code: code.trim().toUpperCase() } }).catch(console.error);
     return this.data.campaigns.length < initialLen;
   }
 
@@ -420,10 +747,19 @@ export class LocalDbStore {
     return this.data.leads;
   }
 
+  public saveLead(lead: CrmLeadItem): CrmLeadItem {
+    this.upsertLeadsAndSyncJobs([lead], []);
+    return lead;
+  }
+
   public clearLeadsAndJobs(autoPersist: boolean = true): void {
     this.data.leads = [];
     this.data.jobs = [];
-    if (autoPersist) this.persist();
+    if (autoPersist) {
+      this.persist();
+      prisma.processingJob.deleteMany({}).catch(console.error);
+      prisma.crmLead.deleteMany({}).catch(console.error);
+    }
   }
 
   public upsertLeadsAndSyncJobs(newLeads: CrmLeadItem[], newJobs: ProcessingJobItem[]): void {
@@ -437,26 +773,25 @@ export class LocalDbStore {
       existingJobsMap.set(j.leadRef, j);
     });
 
-    // Upsert all CRM leads while preserving existing local metadata
     newLeads.forEach((nl) => {
       const existing = existingLeadsMap.get(nl.leadRef);
-      if (existing) {
-        existingLeadsMap.set(nl.leadRef, {
-          ...existing,
-          ...nl,
-          recordings: (nl.recordings && nl.recordings.length > 0) ? nl.recordings : existing.recordings,
-          syncedAt: new Date().toISOString(),
-        });
-      } else {
-        existingLeadsMap.set(nl.leadRef, nl);
-      }
+      const mergedLead: CrmLeadItem = existing
+        ? {
+            ...existing,
+            ...nl,
+            recordings: (nl.recordings && nl.recordings.length > 0) ? nl.recordings : existing.recordings,
+            syncedAt: new Date().toISOString(),
+          }
+        : nl;
+      existingLeadsMap.set(nl.leadRef, mergedLead);
+      this.persistLeadToDb(mergedLead).catch(console.error);
     });
 
-    // Sync queue jobs: only add new job if no job already exists for the lead
     newJobs.forEach((nj) => {
       const existingJob = existingJobsMap.get(nj.leadRef);
       if (!existingJob) {
         existingJobsMap.set(nj.leadRef, nj);
+        this.persistJobToDb(nj).catch(console.error);
       }
     });
 
@@ -486,18 +821,7 @@ export class LocalDbStore {
   }
 
   public getLeadByRef(leadRef: string): CrmLeadItem | undefined {
-    return this.data.leads.find((l) => l.leadRef === leadRef || l.id === leadRef || l.crmLeadId === leadRef);
-  }
-
-  public saveLead(lead: CrmLeadItem, autoPersist: boolean = true): CrmLeadItem {
-    const idx = this.data.leads.findIndex((l) => l.leadRef === lead.leadRef || l.id === lead.id);
-    if (idx >= 0) {
-      this.data.leads[idx] = { ...this.data.leads[idx], ...lead };
-    } else {
-      this.data.leads.push(lead);
-    }
-    if (autoPersist) this.persist();
-    return lead;
+    return this.data.leads.find((l) => l.leadRef === leadRef);
   }
 
   // Processing Jobs
@@ -566,7 +890,10 @@ export class LocalDbStore {
     } else {
       this.data.jobs.push(cleanJob);
     }
-    if (autoPersist) this.persist();
+    if (autoPersist) {
+      this.persist();
+      this.persistJobToDb(cleanJob).catch(console.error);
+    }
     return cleanJob;
   }
 
@@ -583,7 +910,10 @@ export class LocalDbStore {
     if (this.data.auditLogs.length > 300) {
       this.data.auditLogs = this.data.auditLogs.slice(0, 300);
     }
-    if (autoPersist) this.persist();
+    if (autoPersist) {
+      this.persist();
+      this.persistAuditLogToDb(log).catch(console.error);
+    }
     return log;
   }
 
@@ -629,6 +959,27 @@ export class LocalDbStore {
     let totalOutputTokens = 0;
     let totalProcessingDurationMs = 0;
 
+    let qualifiedCount = 0;
+    let needsReviewCount = 0;
+    let rejectedCount = 0;
+    let pendingCount = 0;
+
+    let under1Min = 0;
+    let oneTo3Min = 0;
+    let threeTo5Min = 0;
+    let over5Min = 0;
+
+    const todayStr = new Date().toISOString().slice(0, 10);
+    const yesterdayDate = new Date(Date.now() - 86400000);
+    const yesterdayStr = yesterdayDate.toISOString().slice(0, 10);
+    const sevenDaysAgoCutoff = Date.now() - 7 * 86400000;
+    const fourteenDaysAgoCutoff = Date.now() - 14 * 86400000;
+
+    let todayLeadsCount = 0;
+    let yesterdayLeadsCount = 0;
+    let thisWeekLeadsCount = 0;
+    let lastWeekLeadsCount = 0;
+
     jobs.forEach((j) => {
       const duration = j.rawTranscript?.durationSeconds || j.lead?.durationSeconds || 45;
       totalAudioDurationSeconds += duration;
@@ -638,16 +989,43 @@ export class LocalDbStore {
       totalInputTokens += pTokens;
       totalOutputTokens += cTokens;
       totalProcessingDurationMs += j.processingDurationMs || (duration > 0 ? duration * 100 : 3500);
+
+      const effectiveQa = (j.manualOverrideStatus || j.qaStatus || j.lead?.qaStatusCrm || 'PENDING').toUpperCase();
+      if (effectiveQa.includes('QUALIFIED')) {
+        qualifiedCount++;
+      } else if (effectiveQa.includes('REVIEW')) {
+        needsReviewCount++;
+      } else if (effectiveQa.includes('REJECTED') || effectiveQa.includes('DISQUALIFIED') || effectiveQa.includes('UNQUALIFIED')) {
+        rejectedCount++;
+      } else {
+        pendingCount++;
+      }
+
+      if (duration < 60) under1Min++;
+      else if (duration < 180) oneTo3Min++;
+      else if (duration < 300) threeTo5Min++;
+      else over5Min++;
+
+      const createdAtMs = new Date(j.createdAt).getTime();
+      const jobDateStr = j.createdAt.slice(0, 10);
+      if (jobDateStr === todayStr) todayLeadsCount++;
+      if (jobDateStr === yesterdayStr) yesterdayLeadsCount++;
+      if (createdAtMs >= sevenDaysAgoCutoff) thisWeekLeadsCount++;
+      else if (createdAtMs >= fourteenDaysAgoCutoff) lastWeekLeadsCount++;
     });
 
     const totalSttUsageMinutes = Number((totalAudioDurationSeconds / 60).toFixed(2));
     const totalGeminiTokens = totalInputTokens + totalOutputTokens;
 
-    const estimatedSttCost = Number((totalSttUsageMinutes * (settings.sttCostPerMinute || 0.016)).toFixed(4));
+    const sttRate = settings.sttCostPerMinute || 0.016;
+    const geminiInRate = settings.geminiInputCostPer1M || 0.075;
+    const geminiOutRate = settings.geminiOutputCostPer1M || 0.30;
+
+    const estimatedSttCost = Number((totalSttUsageMinutes * sttRate).toFixed(4));
     const estimatedGeminiCost = Number(
       (
-        (totalInputTokens / 1_000_000) * (settings.geminiInputCostPer1M || 0.075) +
-        (totalOutputTokens / 1_000_000) * (settings.geminiOutputCostPer1M || 0.30)
+        (totalInputTokens / 1_000_000) * geminiInRate +
+        (totalOutputTokens / 1_000_000) * geminiOutRate
       ).toFixed(4)
     );
     const totalEstimatedCost = Number((estimatedSttCost + estimatedGeminiCost).toFixed(4));
@@ -656,18 +1034,57 @@ export class LocalDbStore {
     const successPercentage = totalRecordingsProcessed > 0 ? Number(((completedJobsCount / totalRecordingsProcessed) * 100).toFixed(1)) : 100;
     const avgProcessingDurationSeconds = totalRecordingsProcessed > 0 ? Number((totalProcessingDurationMs / totalRecordingsProcessed / 1000).toFixed(1)) : 0;
 
-    // Daily breakdown
-    const dateMap: Record<string, { raw: number; edited: number; durationSeconds: number; tokens: number }> = {};
+    const todayGrowthPercent = yesterdayLeadsCount > 0 ? Number((((todayLeadsCount - yesterdayLeadsCount) / yesterdayLeadsCount) * 100).toFixed(1)) : todayLeadsCount > 0 ? 100 : 0;
+    const weeklyGrowthPercent = lastWeekLeadsCount > 0 ? Number((((thisWeekLeadsCount - lastWeekLeadsCount) / lastWeekLeadsCount) * 100).toFixed(1)) : thisWeekLeadsCount > 0 ? 100 : 0;
+
+    const avgCostPerLead = totalRecordingsProcessed > 0 ? Number((totalEstimatedCost / totalRecordingsProcessed).toFixed(4)) : 0;
+    const avgCostPerQualifiedLead = qualifiedCount > 0 ? Number((totalEstimatedCost / qualifiedCount).toFixed(4)) : 0;
+
+    const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    const dateMap: Record<string, {
+      raw: number;
+      edited: number;
+      durationSeconds: number;
+      tokens: number;
+      qualified: number;
+      needsReview: number;
+      pending: number;
+      disqualified: number;
+      pTokens: number;
+      cTokens: number;
+    }> = {};
+
     jobs.forEach((j) => {
       const dateKey = j.createdAt.slice(0, 10);
       if (!dateMap[dateKey]) {
-        dateMap[dateKey] = { raw: 0, edited: 0, durationSeconds: 0, tokens: 0 };
+        dateMap[dateKey] = {
+          raw: 0,
+          edited: 0,
+          durationSeconds: 0,
+          tokens: 0,
+          qualified: 0,
+          needsReview: 0,
+          pending: 0,
+          disqualified: 0,
+          pTokens: 0,
+          cTokens: 0,
+        };
       }
-      if (j.rawTranscript) dateMap[dateKey].raw++;
+      dateMap[dateKey].raw++;
       if (j.editedTranscript) dateMap[dateKey].edited++;
-      const dur = j.rawTranscript?.durationSeconds || 45;
+      const dur = j.rawTranscript?.durationSeconds || j.lead?.durationSeconds || 45;
       dateMap[dateKey].durationSeconds += dur;
-      dateMap[dateKey].tokens += (j.promptTokens || dur * 12) + (j.completionTokens || dur * 4);
+      const pT = j.promptTokens || Math.round(dur * 12);
+      const cT = j.completionTokens || Math.round(dur * 4);
+      dateMap[dateKey].pTokens += pT;
+      dateMap[dateKey].cTokens += cT;
+      dateMap[dateKey].tokens += (pT + cT);
+
+      const effectiveQa = (j.manualOverrideStatus || j.qaStatus || j.lead?.qaStatusCrm || 'PENDING').toUpperCase();
+      if (effectiveQa.includes('QUALIFIED')) dateMap[dateKey].qualified++;
+      else if (effectiveQa.includes('REVIEW')) dateMap[dateKey].needsReview++;
+      else if (effectiveQa.includes('REJECTED') || effectiveQa.includes('DISQUALIFIED') || effectiveQa.includes('UNQUALIFIED')) dateMap[dateKey].disqualified++;
+      else dateMap[dateKey].pending++;
     });
 
     const sortedDates = Object.keys(dateMap).sort();
@@ -676,17 +1093,112 @@ export class LocalDbStore {
     const recordingDurationOverTime = sortedDates.map((d) => ({ date: d, durationMinutes: Number((dateMap[d].durationSeconds / 60).toFixed(1)) }));
     const apiUsageOverTime = sortedDates.map((d) => ({ date: d, sttMinutes: Number((dateMap[d].durationSeconds / 60).toFixed(1)), tokens: dateMap[d].tokens }));
 
-    // Client Breakdown
-    const clientMap: Record<string, { name: string; count: number; qualifiedCount: number }> = {};
+    const dailyLeadVelocity = sortedDates.map((d) => {
+      const dt = new Date(d);
+      const dayName = isNaN(dt.getTime()) ? 'Day' : dayNames[dt.getDay()];
+      const sttMins = dateMap[d].durationSeconds / 60;
+      const daySttCost = sttMins * sttRate;
+      const dayGeminiCost = (dateMap[d].pTokens / 1_000_000) * geminiInRate + (dateMap[d].cTokens / 1_000_000) * geminiOutRate;
+      return {
+        date: d,
+        dayName,
+        totalLeads: dateMap[d].raw,
+        qualified: dateMap[d].qualified,
+        needsReview: dateMap[d].needsReview,
+        pending: dateMap[d].pending,
+        disqualified: dateMap[d].disqualified,
+        cost: Number((daySttCost + dayGeminiCost).toFixed(4)),
+        sttMinutes: Number(sttMins.toFixed(1)),
+      };
+    });
+
+    const weekMap: Record<string, { startDate: string; endDate: string; totalLeads: number; qualified: number; needsReview: number; durationSeconds: number; pTokens: number; cTokens: number }> = {};
+    sortedDates.forEach((d) => {
+      const dt = new Date(d);
+      if (isNaN(dt.getTime())) return;
+      const dayOfWeek = dt.getDay();
+      const sunday = new Date(dt);
+      sunday.setDate(dt.getDate() - dayOfWeek);
+      const sundayStr = sunday.toISOString().slice(0, 10);
+      const saturday = new Date(sunday);
+      saturday.setDate(sunday.getDate() + 6);
+      const saturdayStr = saturday.toISOString().slice(0, 10);
+
+      const weekKey = `Week (${sundayStr.slice(5)} - ${saturdayStr.slice(5)})`;
+      if (!weekMap[weekKey]) {
+        weekMap[weekKey] = {
+          startDate: sundayStr,
+          endDate: saturdayStr,
+          totalLeads: 0,
+          qualified: 0,
+          needsReview: 0,
+          durationSeconds: 0,
+          pTokens: 0,
+          cTokens: 0,
+        };
+      }
+      weekMap[weekKey].totalLeads += dateMap[d].raw;
+      weekMap[weekKey].qualified += dateMap[d].qualified;
+      weekMap[weekKey].needsReview += dateMap[d].needsReview;
+      weekMap[weekKey].durationSeconds += dateMap[d].durationSeconds;
+      weekMap[weekKey].pTokens += dateMap[d].pTokens;
+      weekMap[weekKey].cTokens += dateMap[d].cTokens;
+    });
+
+    const weeklyLeadVelocity = Object.keys(weekMap).map((wKey) => {
+      const item = weekMap[wKey];
+      const sttMins = item.durationSeconds / 60;
+      const wSttCost = sttMins * sttRate;
+      const wGeminiCost = (item.pTokens / 1_000_000) * geminiInRate + (item.cTokens / 1_000_000) * geminiOutRate;
+      return {
+        weekLabel: wKey,
+        startDate: item.startDate,
+        endDate: item.endDate,
+        totalLeads: item.totalLeads,
+        qualified: item.qualified,
+        needsReview: item.needsReview,
+        cost: Number((wSttCost + wGeminiCost).toFixed(4)),
+      };
+    });
+
+    const totalQaEvaluated = qualifiedCount + needsReviewCount + rejectedCount + pendingCount;
+    const qualityDistribution = {
+      qualified: qualifiedCount,
+      needsReview: needsReviewCount,
+      pending: pendingCount,
+      rejected: rejectedCount,
+      qualifiedPercent: totalQaEvaluated > 0 ? Number(((qualifiedCount / totalQaEvaluated) * 100).toFixed(1)) : 0,
+      needsReviewPercent: totalQaEvaluated > 0 ? Number(((needsReviewCount / totalQaEvaluated) * 100).toFixed(1)) : 0,
+      pendingPercent: totalQaEvaluated > 0 ? Number(((pendingCount / totalQaEvaluated) * 100).toFixed(1)) : 0,
+      rejectedPercent: totalQaEvaluated > 0 ? Number(((rejectedCount / totalQaEvaluated) * 100).toFixed(1)) : 0,
+    };
+
+    const durationDistribution = {
+      under1Min,
+      oneTo3Min,
+      threeTo5Min,
+      over5Min,
+      avgDurationSeconds: totalRecordingsProcessed > 0 ? Math.round(totalAudioDurationSeconds / totalRecordingsProcessed) : 0,
+    };
+
+    const clientMap: Record<string, { name: string; count: number; qualifiedCount: number; needsReviewCount: number; durationSeconds: number; pTokens: number; cTokens: number }> = {};
     jobs.forEach((j) => {
       const code = j.lead?.clientCode || 'UNKNOWN';
       const name = j.client?.name || code;
-      if (!clientMap[code]) clientMap[code] = { name, count: 0, qualifiedCount: 0 };
-      clientMap[code].count++;
-      if ((j.manualOverrideStatus || j.qaStatus) === 'QUALIFIED') {
-        clientMap[code].qualifiedCount++;
+      if (!clientMap[code]) {
+        clientMap[code] = { name, count: 0, qualifiedCount: 0, needsReviewCount: 0, durationSeconds: 0, pTokens: 0, cTokens: 0 };
       }
+      clientMap[code].count++;
+      const dur = j.rawTranscript?.durationSeconds || j.lead?.durationSeconds || 45;
+      clientMap[code].durationSeconds += dur;
+      clientMap[code].pTokens += (j.promptTokens || dur * 12);
+      clientMap[code].cTokens += (j.completionTokens || dur * 4);
+
+      const effectiveQa = (j.manualOverrideStatus || j.qaStatus || j.lead?.qaStatusCrm || 'PENDING').toUpperCase();
+      if (effectiveQa.includes('QUALIFIED')) clientMap[code].qualifiedCount++;
+      if (effectiveQa.includes('REVIEW')) clientMap[code].needsReviewCount++;
     });
+
     const clientAnalytics = Object.keys(clientMap).map((code) => ({
       clientCode: code,
       clientName: clientMap[code].name,
@@ -694,21 +1206,52 @@ export class LocalDbStore {
       qualifiedCount: clientMap[code].qualifiedCount,
     }));
 
-    // Campaign Breakdown
-    const campaignMap: Record<string, { name: string; count: number }> = {};
+    const clientPerformance = Object.keys(clientMap).map((code) => {
+      const item = clientMap[code];
+      const sttMins = item.durationSeconds / 60;
+      const cSttCost = sttMins * sttRate;
+      const cGeminiCost = (item.pTokens / 1_000_000) * geminiInRate + (item.cTokens / 1_000_000) * geminiOutRate;
+      return {
+        clientCode: code,
+        clientName: item.name,
+        totalLeads: item.count,
+        qualifiedCount: item.qualifiedCount,
+        needsReviewCount: item.needsReviewCount,
+        conversionRate: item.count > 0 ? Number(((item.qualifiedCount / item.count) * 100).toFixed(1)) : 0,
+        sttMinutes: Number(sttMins.toFixed(1)),
+        estimatedCost: Number((cSttCost + cGeminiCost).toFixed(4)),
+      };
+    });
+
+    const campaignMap: Record<string, { name: string; clientCode: string; count: number; qualifiedCount: number }> = {};
     jobs.forEach((j) => {
       const code = j.lead?.campaignCode || 'UNKNOWN';
       const name = j.campaign?.name || code;
-      if (!campaignMap[code]) campaignMap[code] = { name, count: 0 };
+      const clientCode = j.lead?.clientCode || 'UNKNOWN';
+      if (!campaignMap[code]) campaignMap[code] = { name, clientCode, count: 0, qualifiedCount: 0 };
       campaignMap[code].count++;
+      const effectiveQa = (j.manualOverrideStatus || j.qaStatus || j.lead?.qaStatusCrm || 'PENDING').toUpperCase();
+      if (effectiveQa.includes('QUALIFIED')) campaignMap[code].qualifiedCount++;
     });
+
     const campaignAnalytics = Object.keys(campaignMap).map((code) => ({
       campaignCode: code,
       campaignName: campaignMap[code].name,
       count: campaignMap[code].count,
     }));
 
-    // Status distribution
+    const campaignPerformance = Object.keys(campaignMap).map((code) => {
+      const item = campaignMap[code];
+      return {
+        campaignCode: code,
+        campaignName: item.name,
+        clientCode: item.clientCode,
+        totalLeads: item.count,
+        qualifiedCount: item.qualifiedCount,
+        conversionRate: item.count > 0 ? Number(((item.qualifiedCount / item.count) * 100).toFixed(1)) : 0,
+      };
+    });
+
     const statusCounts: Record<string, number> = {
       COMPLETED: jobs.filter((j) => j.status === 'COMPLETED').length,
       PENDING: jobs.filter((j) => j.status === 'PENDING').length,
@@ -736,10 +1279,28 @@ export class LocalDbStore {
       totalEstimatedCost,
       avgProcessingDurationSeconds,
       successPercentage,
+
+      todayLeadsCount,
+      yesterdayLeadsCount,
+      todayGrowthPercent,
+      thisWeekLeadsCount,
+      lastWeekLeadsCount,
+      weeklyGrowthPercent,
+      avgCostPerLead,
+      avgCostPerQualifiedLead,
+
       dailyActivity,
       rawVsEdited,
       recordingDurationOverTime,
       apiUsageOverTime,
+
+      dailyLeadVelocity,
+      weeklyLeadVelocity,
+      qualityDistribution,
+      durationDistribution,
+      clientPerformance,
+      campaignPerformance,
+
       clientAnalytics,
       campaignAnalytics,
       statusDistribution,

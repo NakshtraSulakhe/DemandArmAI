@@ -11,9 +11,10 @@ import {
   ChevronLeft,
   ChevronRight,
   Shield,
-  Zap,
   Sun,
   Moon,
+  Building2,
+  FileCode2,
 } from 'lucide-react';
 
 export type NavTab = 'dashboard' | 'all-leads' | 'queue' | 'configuration' | 'analytics' | 'settings';
@@ -41,14 +42,62 @@ export default function Sidebar({
   theme = 'dark',
   onToggleTheme,
 }: SidebarProps) {
-  const navItems: { id: NavTab; label: string; icon: React.ReactNode; badge?: number }[] = [
+  const mainNavItems: { id: NavTab; label: string; icon: React.ReactNode; badge?: number }[] = [
     { id: 'dashboard', label: 'Dashboard', icon: <LayoutDashboard className="w-4 h-4" /> },
     { id: 'all-leads', label: 'All Leads', icon: <Users className="w-4 h-4" /> },
     { id: 'queue', label: 'Queue', icon: <Layers className="w-4 h-4" />, badge: queueCount },
-    { id: 'configuration', label: 'Configuration', icon: <Sliders className="w-4 h-4" /> },
     { id: 'analytics', label: 'Analytics', icon: <BarChart2 className="w-4 h-4" /> },
+  ];
+
+  const configNavItems: { id: NavTab; label: string; icon: React.ReactNode }[] = [
+    { id: 'configuration', label: 'Configuration', icon: <Sliders className="w-4 h-4" /> },
+  ];
+
+  const systemNavItems: { id: NavTab; label: string; icon: React.ReactNode }[] = [
     { id: 'settings', label: 'Settings', icon: <Settings className="w-4 h-4" /> },
   ];
+
+  const renderNavGroup = (title: string, items: typeof mainNavItems) => (
+    <div className="space-y-1">
+      {!isCollapsed && (
+        <div className="px-3 pt-3 pb-1 text-[10px] font-bold uppercase tracking-wider text-slate-500">
+          {title}
+        </div>
+      )}
+      {items.map((item) => {
+        const isActive = activeTab === item.id;
+        return (
+          <button
+            key={item.id}
+            onClick={() => {
+              setActiveTab(item.id);
+              setMobileOpen(false);
+            }}
+            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
+              isActive
+                ? 'bg-blue-600 text-white shadow-md shadow-blue-600/25'
+                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+            } ${isCollapsed ? 'justify-center px-0' : ''}`}
+            title={isCollapsed ? item.label : undefined}
+          >
+            <span className={`${isActive ? 'text-white' : 'text-slate-400'}`}>{item.icon}</span>
+            {!isCollapsed && <span className="truncate flex-1 text-left">{item.label}</span>}
+            {item.badge !== undefined && item.badge > 0 && !isCollapsed && (
+              <span
+                className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                  isActive
+                    ? 'bg-white/20 text-white'
+                    : 'bg-blue-500/20 text-blue-400 border border-blue-500/30'
+                }`}
+              >
+                {item.badge}
+              </span>
+            )}
+          </button>
+        );
+      })}
+    </div>
+  );
 
   return (
     <>
@@ -62,13 +111,18 @@ export default function Sidebar({
 
       {/* Sidebar Container */}
       <aside
-        className={`fixed top-0 bottom-0 left-0 z-50 flex flex-col bg-slate-900/95 border-r border-slate-800/80 backdrop-blur-md transition-all duration-300 ease-in-out ${isCollapsed ? 'w-20' : 'w-64'
-          } ${mobileOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}
+        className={`fixed top-0 bottom-0 left-0 z-50 flex flex-col bg-slate-900/95 border-r border-slate-800/80 backdrop-blur-md transition-all duration-300 ease-in-out ${
+          isCollapsed ? 'w-20' : 'w-64'
+        } ${mobileOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}
       >
         {/* Brand Header */}
-        <div className="flex items-center justify-between h-16 px-4 border-b border-slate-800/80">
-          <div className="flex items-center gap-3 overflow-hidden">
-            <div className="p-2 rounded-xl bg-gradient-to-tr from-blue-600 to-indigo-600 text-white shadow-lg shadow-blue-500/20 shrink-0">
+        <div
+          className={`flex items-center justify-between h-16 border-b border-slate-800/80 ${
+            isCollapsed ? 'px-2.5 gap-1' : 'px-4'
+          }`}
+        >
+          <div className="flex items-center gap-2.5 min-w-0 shrink-0">
+            <div className="p-1.5 rounded-xl bg-gradient-to-tr from-blue-600 to-indigo-600 text-white shadow-md shadow-blue-500/20 shrink-0">
               <Shield className="w-5 h-5" />
             </div>
             {!isCollapsed && (
@@ -86,41 +140,18 @@ export default function Sidebar({
           {/* Desktop Collapse Toggle */}
           <button
             onClick={() => setIsCollapsed(!isCollapsed)}
-            className="hidden lg:flex p-1.5 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-slate-800/80 transition-colors"
+            className="hidden lg:flex p-1 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-slate-800/80 transition-colors shrink-0"
             title={isCollapsed ? 'Expand Sidebar' : 'Collapse Sidebar'}
           >
             {isCollapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
           </button>
         </div>
 
-        {/* Navigation Items */}
-        <nav className="flex-1 px-3 py-4 space-y-1.5 overflow-y-auto">
-          {navItems.map((item) => {
-            const isActive = activeTab === item.id;
-            return (
-              <button
-                key={item.id}
-                onClick={() => {
-                  setActiveTab(item.id);
-                  setMobileOpen(false);
-                }}
-                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all ${isActive
-                  ? 'bg-blue-600 text-white shadow-md shadow-blue-600/30'
-                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
-                  } ${isCollapsed ? 'justify-center px-0' : ''}`}
-                title={isCollapsed ? item.label : undefined}
-              >
-                <span className={`${isActive ? 'text-white' : 'text-slate-400'}`}>{item.icon}</span>
-                {!isCollapsed && <span className="truncate flex-1 text-left">{item.label}</span>}
-                {item.badge !== undefined && item.badge > 0 && !isCollapsed && (
-                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${isActive ? 'bg-white/20 text-white' : 'bg-blue-500/20 text-blue-400 border border-blue-500/30'
-                    }`}>
-                    {item.badge}
-                  </span>
-                )}
-              </button>
-            );
-          })}
+        {/* Navigation Items Organized in Sections */}
+        <nav className="flex-1 px-3 py-3 space-y-4 overflow-y-auto">
+          {renderNavGroup('Main', mainNavItems)}
+          {renderNavGroup('Configuration', configNavItems)}
+          {renderNavGroup('System', systemNavItems)}
         </nav>
 
         {/* User Profile Section & Theme Toggle at Bottom */}
@@ -128,8 +159,9 @@ export default function Sidebar({
           {onToggleTheme && (
             <button
               onClick={onToggleTheme}
-              className={`w-full flex items-center gap-3 p-2 rounded-xl bg-slate-950/40 hover:bg-slate-800/60 border border-slate-800/60 text-xs font-medium text-slate-300 transition-colors ${isCollapsed ? 'justify-center' : ''
-                }`}
+              className={`w-full flex items-center gap-3 p-2 rounded-xl bg-slate-950/40 hover:bg-slate-800/60 border border-slate-800/60 text-xs font-medium text-slate-300 transition-colors cursor-pointer ${
+                isCollapsed ? 'justify-center' : ''
+              }`}
               title={theme === 'light' ? 'Switch to Dark Mode' : 'Switch to Light Mode'}
             >
               {theme === 'light' ? (
@@ -144,8 +176,9 @@ export default function Sidebar({
           )}
 
           <div
-            className={`flex items-center gap-3 p-2 rounded-xl bg-slate-950/60 border border-slate-800/60 ${isCollapsed ? 'justify-center p-2' : ''
-              }`}
+            className={`flex items-center gap-3 p-2 rounded-xl bg-slate-950/60 border border-slate-800/60 ${
+              isCollapsed ? 'justify-center p-2' : ''
+            }`}
           >
             <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-purple-600 to-blue-600 flex items-center justify-center text-white text-xs font-bold shrink-0">
               NA

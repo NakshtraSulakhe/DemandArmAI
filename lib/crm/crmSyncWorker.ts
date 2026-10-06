@@ -87,18 +87,16 @@ export class CrmSyncWorkerService {
    * Triggers FAST SYNC across all active clients (2-minute creation window).
    */
   public async runFastSync(): Promise<CrmSyncMetricsState> {
-    const todayStr = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
     this.lastFastSyncAt = new Date().toISOString();
-    return this.executeSyncPass('FAST', todayStr);
+    return this.executeSyncPass('FAST', '');
   }
 
   /**
-   * Triggers RECONCILIATION SYNC across all active clients (14-day rolling window).
+   * Triggers RECONCILIATION SYNC across all active clients (fetches all leads).
    */
   public async runReconciliationSync(): Promise<CrmSyncMetricsState> {
-    const fourteenDaysAgo = new Date(Date.now() - 14 * 86400000).toISOString().split('T')[0];
     this.lastReconciliationSyncAt = new Date().toISOString();
-    return this.executeSyncPass('RECONCILIATION', fourteenDaysAgo);
+    return this.executeSyncPass('RECONCILIATION', '');
   }
 
   /**
@@ -120,15 +118,14 @@ export class CrmSyncWorkerService {
 
     try {
       const settings = dbStore.getSettings();
-      const activeClients = dbStore.getClients().filter((c) => c.isActive);
-      const activeClientCodes = activeClients.map((c) => c.code.trim());
-      this.metricsState.activeClientCodes = activeClientCodes;
+      let activeClients = dbStore.getClients().filter((c) => c.isActive);
+      let activeClientCodes = activeClients.map((c) => c.code.trim());
 
+      // If no active clients in DB, fallback to known CRM client codes to discover all leads
       if (activeClientCodes.length === 0) {
-        console.log('[CRM Sync Worker] No active clients configured. Skipping sync pass.');
-        this.metricsState.globalStatus = 'IDLE';
-        return this.getSyncMetrics();
+        activeClientCodes = ['1020', '1010', '1030'];
       }
+      this.metricsState.activeClientCodes = activeClientCodes;
 
       const crmEndpoint =
         settings.crmEndpoint ||
@@ -180,6 +177,19 @@ export class CrmSyncWorkerService {
           // Process and upsert each lead into local MySQL database
           for (const rawLead of leads) {
             const parsedLead = this.mapRawLeadToCrmLeadItem(rawLead, clientCode);
+
+            // Auto-register client if missing
+            let matchingClient = dbStore.getClientByCode(parsedLead.clientCode);
+            if (!matchingClient && parsedLead.clientCode) {
+              const newClientData = {
+                name: `Client ${parsedLead.clientCode}`,
+                code: parsedLead.clientCode,
+                globalPrompt: `You are an expert sales call transcript editor for Client ${parsedLead.clientCode}.\nFormat the edited transcript cleanly with clear speaker labels ([Sales Rep] / [Prospect Name]).\nRemove filler words like "um", "uh" while strictly preserving implementation timelines, user seat counts, pricing numbers, product features, and client commitments.`,
+                qualificationCriteria: `1. Verification of prospect name, company, and decision-maker role.\n2. Discussion of software integration or implementation requirements.\n3. Target implementation timeline identified.\n4. Follow-up action or demo agreed upon.`,
+                isActive: true,
+              };
+              matchingClient = dbStore.saveClient(newClientData);
+            }
 
             // Auto-register campaign if missing
             let matchingCampaign = dbStore.getCampaignByCode(parsedLead.campaignCode);
@@ -338,7 +348,9 @@ export class CrmSyncWorkerService {
     while (page <= totalPages && page <= maxSafetyPages) {
       const url = new URL(baseUrl);
       url.searchParams.set('client_code', clientCode);
-      url.searchParams.set('date_from', dateFromStr);
+      if (dateFromStr) {
+        url.searchParams.set('date_from', dateFromStr);
+      }
       url.searchParams.set('page', page.toString());
       url.searchParams.set('limit', '500');
 

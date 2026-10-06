@@ -1,4 +1,4 @@
-// Prisma Schema for Automated AI Call Transcription & QA Platform (MySQL)
+// Prisma Schema for Automated AI Call Transcription & QA Platform (MySQL / phpMyAdmin)
 
 datasource db {
   provider = "mysql"
@@ -34,6 +34,16 @@ model Campaign {
   createdAt                     DateTime @default(now())
   updatedAt                     DateTime @updatedAt
   client                        Client   @relation(fields: [clientCode], references: [code], onDelete: Cascade)
+}
+
+model ClientPromptVersion {
+  id                    String   @id @default(cuid())
+  clientCode            String
+  version               Int
+  promptText            String   @db.Text
+  qualificationCriteria String   @db.Text
+  createdBy             String   @default("System Admin")
+  createdAt             DateTime @default(now())
 }
 
 model CrmLead {
@@ -94,27 +104,27 @@ model AuditLog {
 }
 
 model SystemSettings {
-  id                    String   @id @default("global")
-  crmEndpoint           String   @default("https://app.tarajglobal.com/demandflowbridge/api/get_leads.php")
-  crmApiKey             String   @default("crm_sec_demandarm_live_2026")
-  gcsBucketName         String   @default("qtranscript-recordings")
-  gcpProjectId          String   @default("demandarm-ai-qa")
-  gcpClientEmail        String   @default("")
-  gcpPrivateKey         String   @default("") @db.Text
-  sttLanguageCode       String   @default("en-US")
-  sttModel              String   @default("telephony")
-  sttDiarizationEnabled Boolean  @default(true)
-  geminiApiKey          String   @default("")
-  geminiModel           String   @default("gemini-3.8-flash")
-  geminiTemperature     Float    @default(0.2)
-  geminiMaxTokens       Int      @default(4096)
-  maxConcurrency        Int      @default(3)
-  autoSyncInterval      Int      @default(15)
-  autoGenerateTranscripts Boolean @default(true)
-  autoQaEvaluation      Boolean  @default(true)
-  audioRetentionDays    Int      @default(90)
-  sttCostPerMinute      Float    @default(0.016)
-  geminiInputCostPer1M  Float    @default(0.075)
-  geminiOutputCostPer1M Float    @default(0.30)
-  updatedAt             DateTime @updatedAt
+  id                      String   @id @default("global")
+  crmEndpoint             String   @default("https://app.tarajglobal.com/demandflowbridge/api/get_leads.php")
+  crmApiKey               String   @default("crm_sec_demandarm_live_2026")
+  gcsBucketName           String   @default("qtranscript-recordings")
+  gcpProjectId            String   @default("demandarm-ai-qa")
+  gcpClientEmail          String   @default("")
+  gcpPrivateKey           String   @default("") @db.Text
+  sttLanguageCode         String   @default("en-US")
+  sttModel                String   @default("telephony")
+  sttDiarizationEnabled   Boolean  @default(true)
+  geminiApiKey            String   @default("")
+  geminiModel             String   @default("gemini-3.8-flash")
+  geminiTemperature       Float    @default(0.2)
+  geminiMaxTokens         Int      @default(4096)
+  maxConcurrency          Int      @default(3)
+  autoSyncInterval        Int      @default(15)
+  autoGenerateTranscripts Boolean  @default(true)
+  autoQaEvaluation        Boolean  @default(true)
+  audioRetentionDays      Int      @default(90)
+  sttCostPerMinute        Float    @default(0.016)
+  geminiInputCostPer1M    Float    @default(0.075)
+  geminiOutputCostPer1M   Float    @default(0.30)
+  updatedAt               DateTime @updatedAt
 }

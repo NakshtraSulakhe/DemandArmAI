@@ -62,9 +62,7 @@ export default function Header({
 
   return (
     <header
-      className={`sticky top-0 z-30 flex items-center justify-between h-16 px-4 sm:px-6 bg-slate-900/80 border-b border-slate-800/80 backdrop-blur-md transition-all duration-300 ${
-        isCollapsed ? 'lg:ml-20' : 'lg:ml-64'
-      }`}
+      className="sticky top-0 z-30 flex items-center justify-between h-16 px-4 sm:px-6 bg-slate-900/80 border-b border-slate-800/80 backdrop-blur-md transition-all duration-300 w-full"
     >
       <div className="flex items-center gap-3">
         {/* Mobile Menu Toggle Button */}

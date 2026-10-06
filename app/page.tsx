@@ -4,6 +4,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import Sidebar, { NavTab } from './components/Sidebar';
 import Header from './components/Header';
 import DashboardView from './components/DashboardView';
+import AllLeadsView from './components/AllLeadsView';
 import QueueView from './components/QueueView';
 import ClientsView from './components/ClientsView';
 import CampaignsView from './components/CampaignsView';
@@ -244,7 +245,6 @@ export default function Home() {
   useEffect(() => {
     fetchConfigurations();
     fetchPauseStatus();
-    handleSyncCrm();
     updateQueueBadge();
   }, [fetchConfigurations, fetchPauseStatus, updateQueueBadge]);
 
@@ -276,15 +276,19 @@ export default function Home() {
     setIsSyncing(true);
     try {
       const res = await fetch('/api/crm/sync', { method: 'POST' });
+      if (!res.ok) {
+        console.warn(`CRM Sync HTTP error: ${res.status}`);
+        return;
+      }
       const data = await res.json();
       if (data.success) {
         await fetchJobs();
         await updateQueueBadge();
       } else {
-        alert(`CRM Sync Error: ${data.error}`);
+        console.warn(`CRM Sync warning: ${data.error}`);
       }
     } catch (err: any) {
-      alert(`CRM Sync Error: ${err.message}`);
+      console.warn(`CRM Sync network issue: ${err.message}`);
     } finally {
       setIsSyncing(false);
     }
@@ -387,7 +391,9 @@ export default function Home() {
       />
 
       {/* Main App Content Layout */}
-      <div className="flex-1 flex flex-col min-w-0">
+      <div className={`flex-1 flex flex-col min-w-0 transition-all duration-300 ${
+        isCollapsed ? 'lg:pl-20' : 'lg:pl-64'
+      }`}>
         <Header
           activeTab={activeTab}
           onSyncCrm={handleSyncCrm}
@@ -402,12 +408,27 @@ export default function Home() {
           onToggleTheme={toggleTheme}
         />
 
-        <main className={`flex-1 transition-all duration-300 p-4 sm:p-6 lg:p-8 max-w-7xl w-full mx-auto ${
-          isCollapsed ? 'lg:ml-20' : 'lg:ml-64'
-        }`}>
-          {/* TAB 1 & TAB 2: Dashboard & All Leads */}
-          {(activeTab === 'dashboard' || activeTab === 'all-leads') && (
+        <main className="flex-1 transition-all duration-300 p-4 sm:p-6 lg:p-8 max-w-[1600px] w-full mx-auto">
+          {/* TAB 1: Analytical Dashboard */}
+          {activeTab === 'dashboard' && (
             <DashboardView
+              stats={stats}
+              clients={clients}
+              campaigns={campaigns}
+              selectedClientCode={selectedClientCode}
+              setSelectedClientCode={handleClientCodeChange}
+              selectedCampaignCode={selectedCampaignCode}
+              setSelectedCampaignCode={handleCampaignCodeChange}
+              isProcessingPaused={isProcessingPaused}
+              onTogglePause={handleTogglePause}
+              onNavigateToAllLeads={() => setActiveTab('all-leads')}
+              onSyncCrm={handleSyncCrm}
+            />
+          )}
+
+          {/* TAB 2: Dedicated All Leads Database */}
+          {activeTab === 'all-leads' && (
+            <AllLeadsView
               stats={stats}
               jobs={jobs}
               clients={clients}

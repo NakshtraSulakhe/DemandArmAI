@@ -4,6 +4,7 @@ export interface ClientPromptVersion {
   clientCode: string;
   promptType: 'TRANSCRIPT_EDITING' | 'PRE_EDIT_QA' | 'POST_EDIT_QA';
   promptText: string;
+  qualificationCriteria?: string;
   version: number;
   isActive: boolean;
   createdBy: string;
@@ -210,6 +211,67 @@ export interface SystemSettingsConfig {
   updatedAt: string;
 }
 
+export interface DailyLeadVelocityItem {
+  date: string;
+  dayName: string;
+  totalLeads: number;
+  qualified: number;
+  needsReview: number;
+  pending: number;
+  disqualified: number;
+  cost: number;
+  sttMinutes: number;
+}
+
+export interface WeeklyLeadVelocityItem {
+  weekLabel: string;
+  startDate: string;
+  endDate: string;
+  totalLeads: number;
+  qualified: number;
+  needsReview: number;
+  cost: number;
+}
+
+export interface ClientPerformanceItem {
+  clientCode: string;
+  clientName: string;
+  totalLeads: number;
+  qualifiedCount: number;
+  needsReviewCount: number;
+  conversionRate: number;
+  sttMinutes: number;
+  estimatedCost: number;
+}
+
+export interface CampaignPerformanceItem {
+  campaignCode: string;
+  campaignName: string;
+  clientCode: string;
+  totalLeads: number;
+  qualifiedCount: number;
+  conversionRate: number;
+}
+
+export interface QualityDistributionSummary {
+  qualified: number;
+  needsReview: number;
+  pending: number;
+  rejected: number;
+  qualifiedPercent: number;
+  needsReviewPercent: number;
+  pendingPercent: number;
+  rejectedPercent: number;
+}
+
+export interface DurationDistributionSummary {
+  under1Min: number;
+  oneTo3Min: number;
+  threeTo5Min: number;
+  over5Min: number;
+  avgDurationSeconds: number;
+}
+
 export interface AnalyticsSummary {
   totalRecordingsProcessed: number;
   totalRawTranscripts: number;
@@ -224,10 +286,29 @@ export interface AnalyticsSummary {
   totalEstimatedCost: number;
   avgProcessingDurationSeconds: number;
   successPercentage: number;
+  
+  // Daily & Weekly Growth & Velocity Metrics
+  todayLeadsCount: number;
+  yesterdayLeadsCount: number;
+  todayGrowthPercent: number;
+  thisWeekLeadsCount: number;
+  lastWeekLeadsCount: number;
+  weeklyGrowthPercent: number;
+  avgCostPerLead: number;
+  avgCostPerQualifiedLead: number;
+
   dailyActivity: { date: string; count: number }[];
   rawVsEdited: { date: string; raw: number; edited: number }[];
   recordingDurationOverTime: { date: string; durationMinutes: number }[];
   apiUsageOverTime: { date: string; sttMinutes: number; tokens: number }[];
+
+  dailyLeadVelocity: DailyLeadVelocityItem[];
+  weeklyLeadVelocity: WeeklyLeadVelocityItem[];
+  qualityDistribution: QualityDistributionSummary;
+  durationDistribution: DurationDistributionSummary;
+  clientPerformance: ClientPerformanceItem[];
+  campaignPerformance: CampaignPerformanceItem[];
+
   clientAnalytics: { clientCode: string; clientName: string; count: number; qualifiedCount: number }[];
   campaignAnalytics: { campaignCode: string; campaignName: string; count: number }[];
   statusDistribution: { status: string; count: number }[];
