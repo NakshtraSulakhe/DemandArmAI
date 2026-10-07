@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { credentialService } from '@/lib/config/credentialService';
 import { dbStore } from '@/lib/db/store';
+import { crmSyncWorker } from '@/lib/crm/crmSyncWorker';
 
 export async function GET() {
   try {
@@ -46,6 +47,8 @@ export async function POST(req: Request) {
 
     if (body.crmEndpoint !== undefined) payload.crmEndpoint = body.crmEndpoint;
     if (body.crmApiKey !== undefined) payload.crmApiKey = body.crmApiKey;
+    if (body.webhookSecret !== undefined) payload.webhookSecret = body.webhookSecret;
+    if (body.crmWritebackUrl !== undefined) payload.crmWritebackUrl = body.crmWritebackUrl;
 
     if (body.maxConcurrency !== undefined) payload.maxConcurrency = body.maxConcurrency;
     if (body.autoSyncInterval !== undefined) payload.autoSyncInterval = body.autoSyncInterval;
@@ -54,7 +57,9 @@ export async function POST(req: Request) {
     if (body.audioRetentionDays !== undefined) payload.audioRetentionDays = body.audioRetentionDays;
 
     credentialService.updateSettings(payload);
-    dbStore.addAuditLog(undefined, 'SETTINGS_UPDATED', 'API Credentials and global pipeline settings were updated.');
+    await dbStore.flushSettingsToDatabase();
+    crmSyncWorker.rescheduleFromSettings();
+    dbStore.addAuditLog(undefined, 'SETTINGS_UPDATED', 'API credentials and pipeline settings were updated.');
 
     const publicSettings = credentialService.getPublicSettingsStatus();
     return NextResponse.json({ success: true, settings: publicSettings });

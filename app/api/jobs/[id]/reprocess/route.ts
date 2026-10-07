@@ -34,29 +34,42 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
     const campaign = dbStore.getCampaignByCode(lead.campaignCode);
 
-    // Re-run AI transcript editing with latest active client prompt
-    const { editedTranscript, versionTag } = await geminiService.editTranscript(
-      client,
-      campaign,
-      lead,
-      job.rawTranscript
-    );
-
-    // Re-evaluate QA criteria
-    const qaResult = await qaEngine.evaluateLead(
-      client,
-      campaign,
-      lead,
-      job.rawTranscript,
-      editedTranscript
-    );
-
-    job.editedTranscript = editedTranscript;
-    job.promptVersionUsed = `${versionTag} (Reprocessed)`;
-    job.qaResultJson = qaResult;
-    job.qaStatus = qaResult.qualificationStatus;
-    job.status = 'COMPLETED';
+    job.status = 'AI_EDITING';
     job.stepError = undefined;
+    dbStore.saveJob(job);
+
+    try {
+      const edited = await geminiService.editTranscript(client, campaign, lead, job.rawTranscript);
+
+      job.editedTranscript = edited.editedTranscript;
+      job.promptVersionUsed = `${edited.versionTag} (Reprocessed)`;
+      job.promptTokens = (job.promptTokens || 0) + edited.promptTokens;
+      job.completionTokens = (job.completionTokens || 0) + edited.completionTokens;
+      job.status = 'QA_EVALUATING';
+      dbStore.saveJob(job);
+
+      const qaResult = await qaEngine.evaluateLead(
+        client,
+        campaign,
+        lead,
+        job.rawTranscript,
+        edited.editedTranscript
+      );
+
+      job.qaResultJson = qaResult;
+      job.qaStatus = qaResult.qualificationStatus;
+      job.promptTokens = (job.promptTokens || 0) + Number(qaResult.metadata?.promptTokens || 0);
+      job.completionTokens = (job.completionTokens || 0) + Number(qaResult.metadata?.completionTokens || 0);
+      job.status = 'COMPLETED';
+      job.stepError = undefined;
+    } catch (err: any) {
+      const stepError = err.message || 'Regenerate failed.';
+      job.status = 'FAILED';
+      job.stepError = stepError;
+      dbStore.saveJob(job);
+      dbStore.addAuditLog(job.id, 'JOB_FAILED', stepError);
+      return NextResponse.json({ success: false, error: stepError, job }, { status: 500 });
+    }
 
     dbStore.saveJob(job);
     dbStore.addAuditLog(

@@ -69,6 +69,9 @@ model CrmLead {
   createdAt      DateTime        @default(now())
   updatedAt      DateTime        @updatedAt
   processingJobs ProcessingJob[]
+
+  @@index([clientCode])
+  @@index([campaignCode])
 }
 
 model ProcessingJob {
@@ -88,10 +91,17 @@ model ProcessingJob {
   reviewedBy           String?
   reviewedAt           DateTime?
   attempts             Int        @default(0)
+  promptTokens         Int        @default(0)
+  completionTokens     Int        @default(0)
+  audioDurationSeconds Int        @default(0)
+  processingDurationMs Int        @default(0)
   createdAt            DateTime   @default(now())
   updatedAt            DateTime   @updatedAt
   lead                 CrmLead    @relation(fields: [leadId], references: [id], onDelete: Cascade)
   auditLogs            AuditLog[]
+
+  @@index([status])
+  @@index([leadRef])
 }
 
 model AuditLog {
@@ -105,16 +115,22 @@ model AuditLog {
 
 model SystemSettings {
   id                      String   @id @default("global")
-  crmEndpoint             String   @default("https://app.tarajglobal.com/demandflowbridge/api/get_leads.php")
-  crmApiKey               String   @default("crm_sec_demandarm_live_2026")
+  crmEndpoint             String   @default("")
+  crmApiKey               String   @default("") @db.Text
+  webhookSecret           String   @default("") @db.Text
+  crmWritebackUrl         String   @default("") @db.Text
+  isProcessingPaused      Boolean  @default(false)
   gcsBucketName           String   @default("qtranscript-recordings")
   gcpProjectId            String   @default("demandarm-ai-qa")
   gcpClientEmail          String   @default("")
   gcpPrivateKey           String   @default("") @db.Text
+  sttProvider             String   @default("gemini")
+  sttApiKey               String   @default("") @db.Text
+  assemblyAiApiKey        String   @default("") @db.Text
   sttLanguageCode         String   @default("en-US")
   sttModel                String   @default("telephony")
   sttDiarizationEnabled   Boolean  @default(true)
-  geminiApiKey            String   @default("")
+  geminiApiKey            String   @default("") @db.Text
   geminiModel             String   @default("gemini-3.8-flash")
   geminiTemperature       Float    @default(0.2)
   geminiMaxTokens         Int      @default(4096)

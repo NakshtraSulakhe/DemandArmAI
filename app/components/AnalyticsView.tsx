@@ -18,6 +18,10 @@ import {
 } from 'lucide-react';
 import { AnalyticsSummary, ClientConfig, CampaignConfig } from '../../lib/types';
 
+function rupees(usd: number, rate: number): string {
+  return `₹${(usd * (rate || 0)).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
 interface AnalyticsViewProps {
   clients: ClientConfig[];
   campaigns: CampaignConfig[];
@@ -28,6 +32,7 @@ export default function AnalyticsView({ clients, campaigns }: AnalyticsViewProps
   const [selectedClientCode, setSelectedClientCode] = useState<string>('ALL');
   const [selectedCampaignCode, setSelectedCampaignCode] = useState<string>('ALL');
   const [analytics, setAnalytics] = useState<AnalyticsSummary | null>(null);
+  const [leadTokenQuery, setLeadTokenQuery] = useState('');
   const [isLoading, setIsLoading] = useState(true);
 
   const fetchAnalytics = async () => {
@@ -162,26 +167,159 @@ export default function AnalyticsView({ clients, campaigns }: AnalyticsViewProps
           <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Gemini Tokens</span>
           <div className="text-xl font-black text-purple-400">{analytics.totalGeminiTokens.toLocaleString()}</div>
           <div className="text-[10px] text-slate-500 font-mono">
-            {analytics.totalInputTokens} In / {analytics.totalOutputTokens} Out
+            {analytics.avgTokensPerLead.toLocaleString()} / lead
           </div>
         </div>
 
         <div className="glass-panel p-4 rounded-xl space-y-1">
           <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">STT Cost Est.</span>
           <div className="text-xl font-black text-emerald-400">${analytics.estimatedSttCost.toFixed(3)}</div>
-          <div className="text-[10px] text-slate-500">$0.016 / Audio Min</div>
+          <div className="text-[10px] font-mono text-slate-300">{rupees(analytics.estimatedSttCost, analytics.usdToInrRate)}</div>
+          <div className="text-[10px] text-slate-500">${analytics.sttCostPerMinute} / Audio Min</div>
         </div>
 
         <div className="glass-panel p-4 rounded-xl space-y-1">
           <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Gemini Cost Est.</span>
           <div className="text-xl font-black text-purple-400">${analytics.estimatedGeminiCost.toFixed(3)}</div>
-          <div className="text-[10px] text-slate-500">Gemini 3.6 Flash Rates</div>
+          <div className="text-[10px] font-mono text-slate-300">{rupees(analytics.estimatedGeminiCost, analytics.usdToInrRate)}</div>
+          <div className="text-[10px] text-slate-500">Configured token rates</div>
         </div>
 
         <div className="glass-panel p-4 rounded-xl space-y-1">
           <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Total Processing Est.</span>
           <div className="text-xl font-black text-amber-400">${analytics.totalEstimatedCost.toFixed(3)}</div>
-          <div className="text-[10px] text-slate-500">Avg {analytics.avgProcessingDurationSeconds}s / call</div>
+          <div className="text-[10px] font-mono text-slate-300">{rupees(analytics.totalEstimatedCost, analytics.usdToInrRate)}</div>
+          <div className="text-[10px] text-slate-500">1 USD = ₹{(analytics.usdToInrRate || 0).toFixed(2)}</div>
+        </div>
+      </div>
+
+      <div className="glass-panel p-6 rounded-2xl border border-slate-800 space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-3">
+          <h4 className="text-xs font-bold uppercase tracking-wider text-slate-200 flex items-center gap-2">
+            <Sparkles className="w-4 h-4 text-purple-400" />
+            Token usage per lead
+          </h4>
+          <span className="text-[10px] text-slate-500 font-mono">
+            Averaged across {analytics.leadsWithTokenUsage.toLocaleString()} leads with recorded Gemini usage
+          </span>
+        </div>
+
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div className="p-4 rounded-xl bg-slate-950/70 border border-slate-800">
+            <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Input tokens / lead</div>
+            <div className="mt-1 text-xl font-black text-slate-100">{analytics.avgInputTokensPerLead.toLocaleString()}</div>
+          </div>
+          <div className="p-4 rounded-xl bg-slate-950/70 border border-slate-800">
+            <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Output tokens / lead</div>
+            <div className="mt-1 text-xl font-black text-slate-100">{analytics.avgOutputTokensPerLead.toLocaleString()}</div>
+          </div>
+          <div className="p-4 rounded-xl bg-slate-950/70 border border-slate-800">
+            <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Total tokens / lead</div>
+            <div className="mt-1 text-xl font-black text-purple-400">{analytics.avgTokensPerLead.toLocaleString()}</div>
+          </div>
+          <div className="p-4 rounded-xl bg-slate-950/70 border border-slate-800">
+            <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Lead cost</div>
+            <div className="mt-1 text-xl font-black text-amber-400">${analytics.costPerProcessedLead.toFixed(4)}</div>
+            <div className="font-mono text-[11px] text-slate-300">{rupees(analytics.costPerProcessedLead, analytics.usdToInrRate)}</div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
+          <div className="p-4 rounded-xl bg-slate-950/40 border border-slate-800/80 space-y-1 font-mono text-slate-400">
+            <div className="font-bold text-slate-200">Gemini cost / lead</div>
+            <div>${analytics.geminiCostPerLead.toFixed(4)} · {rupees(analytics.geminiCostPerLead, analytics.usdToInrRate)}</div>
+            <div>
+              {analytics.avgInputTokensPerLead.toLocaleString()} / 1,000,000 × ${analytics.geminiInputCostPer1M}
+              {' + '}
+              {analytics.avgOutputTokensPerLead.toLocaleString()} / 1,000,000 × ${analytics.geminiOutputCostPer1M}
+            </div>
+          </div>
+          <div className="p-4 rounded-xl bg-slate-950/40 border border-slate-800/80 space-y-1 font-mono text-slate-400">
+            <div className="font-bold text-slate-200">Speech cost / lead</div>
+            <div>${analytics.sttCostPerLead.toFixed(4)} · {rupees(analytics.sttCostPerLead, analytics.usdToInrRate)}</div>
+            <div>
+              Audio cost split across {analytics.leadsWithAudio.toLocaleString()} leads with a recorded duration, at ${analytics.sttCostPerMinute} / minute
+            </div>
+          </div>
+          <div className="p-4 rounded-xl bg-slate-950/40 border border-slate-800/80 space-y-1 font-mono text-slate-400">
+            <div className="font-bold text-slate-200">How the lead cost is built</div>
+            <div className="text-amber-300">${analytics.geminiCostPerLead.toFixed(4)} Gemini + ${analytics.sttCostPerLead.toFixed(4)} speech</div>
+            <div className="text-slate-300">{rupees(analytics.costPerProcessedLead, analytics.usdToInrRate)} at ₹{(analytics.usdToInrRate || 0).toFixed(2)} per USD</div>
+            <div>Token average uses leads that recorded Gemini usage.</div>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h5 className="text-xs font-bold uppercase tracking-wider text-slate-300">
+            Each lead
+            <span className="ml-2 font-mono normal-case tracking-normal text-slate-500">1 USD = ₹{(analytics.usdToInrRate || 0).toFixed(2)}</span>
+          </h5>
+          <input
+            type="text"
+            value={leadTokenQuery}
+            onChange={(event) => setLeadTokenQuery(event.target.value)}
+            placeholder="Search a lead, company, or id"
+            className="w-full max-w-xs bg-slate-950/60 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-200 placeholder:text-slate-500 focus:outline-none focus:border-indigo-400"
+          />
+        </div>
+
+        <div className="overflow-x-auto rounded-xl border border-slate-800">
+          <table className="w-full border-collapse text-left text-xs">
+            <thead className="bg-slate-900/80 text-slate-400 font-bold uppercase tracking-wider">
+              <tr>
+                <th className="px-3 py-2.5">Lead</th>
+                <th className="px-3 py-2.5">Company</th>
+                <th className="px-3 py-2.5">Campaign</th>
+                <th className="px-3 py-2.5 text-right">Input</th>
+                <th className="px-3 py-2.5 text-right">Output</th>
+                <th className="px-3 py-2.5 text-right">Total tokens</th>
+                <th className="px-3 py-2.5 text-right">Audio</th>
+                <th className="px-3 py-2.5 text-right">Lead cost</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-800/60">
+              {(analytics.leadTokenUsage || [])
+                .filter((lead) => {
+                  const query = leadTokenQuery.trim().toLowerCase();
+                  if (!query) return true;
+                  return [lead.contactName, lead.companyName, lead.leadRef, lead.campaignName, lead.clientCode]
+                    .join(' ')
+                    .toLowerCase()
+                    .includes(query);
+                })
+                .map((lead) => (
+                  <tr key={lead.leadRef} className="hover:bg-indigo-500/10">
+                    <td className="px-3 py-2 align-middle">
+                      <div className="font-semibold text-slate-100">{lead.contactName || 'Lead'}</div>
+                      <div className="font-mono text-[10px] text-slate-500">{lead.leadRef}</div>
+                    </td>
+                    <td className="px-3 py-2 align-middle text-slate-300">{lead.companyName || '—'}</td>
+                    <td className="px-3 py-2 align-middle text-slate-400">
+                      {lead.campaignName || 'Campaign'}
+                      {lead.clientCode ? ` · ${lead.clientCode}` : ''}
+                    </td>
+                    <td className="px-3 py-2 text-right font-mono text-slate-200">{lead.inputTokens.toLocaleString()}</td>
+                    <td className="px-3 py-2 text-right font-mono text-slate-200">{lead.outputTokens.toLocaleString()}</td>
+                    <td className="px-3 py-2 text-right font-mono font-bold text-purple-300">{lead.totalTokens.toLocaleString()}</td>
+                    <td className="px-3 py-2 text-right font-mono text-slate-400">{(lead.audioSeconds / 60).toFixed(2)} min</td>
+                    <td className="px-3 py-2 text-right align-middle">
+                      <div className="font-mono font-bold text-amber-300">${lead.leadCost.toFixed(4)}</div>
+                      <div className="font-mono text-[11px] text-slate-200">{rupees(lead.leadCost, analytics.usdToInrRate)}</div>
+                      <div className="font-mono text-[10px] text-slate-500">${lead.geminiCost.toFixed(4)} Gemini · ${lead.speechCost.toFixed(4)} speech</div>
+                    </td>
+                  </tr>
+                ))}
+              {(analytics.leadTokenUsage || []).filter((lead) => {
+                const query = leadTokenQuery.trim().toLowerCase();
+                if (!query) return true;
+                return [lead.contactName, lead.companyName, lead.leadRef, lead.campaignName, lead.clientCode].join(' ').toLowerCase().includes(query);
+              }).length === 0 && (
+                <tr>
+                  <td colSpan={8} className="px-3 py-6 text-center text-slate-500">No lead in this view has recorded token usage.</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
         </div>
       </div>
 
@@ -286,7 +424,7 @@ export default function AnalyticsView({ clients, campaigns }: AnalyticsViewProps
               <span className="flex items-center gap-2">
                 <Clock className="w-4 h-4 text-blue-400" /> Google Speech-to-Text API
               </span>
-              <span className="text-emerald-400 font-mono">${analytics.estimatedSttCost.toFixed(4)}</span>
+              <span className="text-emerald-400 font-mono">${analytics.estimatedSttCost.toFixed(4)} · {rupees(analytics.estimatedSttCost, analytics.usdToInrRate)}</span>
             </div>
 
             <div className="space-y-1.5 text-slate-400 font-mono">
@@ -296,7 +434,7 @@ export default function AnalyticsView({ clients, campaigns }: AnalyticsViewProps
               </div>
               <div className="flex justify-between">
                 <span>Configured Model Rate:</span>
-                <span className="text-slate-200">$0.016 / minute</span>
+                <span className="text-slate-200">${analytics.sttCostPerMinute} / minute</span>
               </div>
               <div className="flex justify-between">
                 <span>Diarization Overhead:</span>
@@ -311,7 +449,7 @@ export default function AnalyticsView({ clients, campaigns }: AnalyticsViewProps
               <span className="flex items-center gap-2">
                 <Sparkles className="w-4 h-4 text-purple-400" /> Google Gemini API
               </span>
-              <span className="text-purple-400 font-mono">${analytics.estimatedGeminiCost.toFixed(4)}</span>
+              <span className="text-purple-400 font-mono">${analytics.estimatedGeminiCost.toFixed(4)} · {rupees(analytics.estimatedGeminiCost, analytics.usdToInrRate)}</span>
             </div>
 
             <div className="space-y-1.5 text-slate-400 font-mono">
@@ -325,7 +463,7 @@ export default function AnalyticsView({ clients, campaigns }: AnalyticsViewProps
               </div>
               <div className="flex justify-between">
                 <span>Configured Model Rates:</span>
-                <span className="text-slate-200">$0.075/1M Input, $0.30/1M Output</span>
+                <span className="text-slate-200">${analytics.geminiInputCostPer1M}/1M Input, ${analytics.geminiOutputCostPer1M}/1M Output</span>
               </div>
             </div>
           </div>

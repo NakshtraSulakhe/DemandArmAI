@@ -6,6 +6,8 @@ export async function GET(req: Request) {
     const { searchParams } = new URL(req.url);
     const clientCode = searchParams.get('clientCode');
 
+    await dbStore.ensureConfigBackupImported();
+    await dbStore.refreshDirectoryFromDb();
     const campaigns = dbStore.getCampaigns(clientCode || undefined);
     return NextResponse.json({ success: true, campaigns });
   } catch (err: any) {

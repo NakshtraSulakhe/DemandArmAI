@@ -1,7 +1,7 @@
 'use client';
 
-import React, { useState } from 'react';
-import { Plus, Layers, Shield, Edit, Trash2, Tag, FileText, CheckSquare } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { Plus, Layers, Shield, Edit, Trash2, Tag, FileText, CheckSquare, Minimize2, Maximize2 } from 'lucide-react';
 import { ClientConfig, CampaignConfig } from '../../lib/types';
 
 interface CampaignsViewProps {
@@ -22,6 +22,26 @@ export default function CampaignsView({ clients, campaigns, onRefresh }: Campaig
   const [qualificationRulesOverride, setQualificationRulesOverride] = useState('');
   const [isActive, setIsActive] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [panelSize, setPanelSize] = useState<'minimized' | 'normal' | 'maximized'>('normal');
+
+  useEffect(() => {
+    const stored = localStorage.getItem('campaign-module-size');
+    if (stored === 'minimized' || stored === 'maximized') setPanelSize(stored);
+  }, []);
+
+  const setSize = (size: 'minimized' | 'normal' | 'maximized') => {
+    setPanelSize(size);
+    localStorage.setItem('campaign-module-size', size);
+  };
+
+  useEffect(() => {
+    if (panelSize !== 'maximized' || isModalOpen) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setSize('normal');
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [panelSize, isModalOpen]);
 
   const handleOpenCreate = (parentCode?: string) => {
     setEditingCampaign(null);
@@ -102,29 +122,88 @@ export default function CampaignsView({ clients, campaigns, onRefresh }: Campaig
     }
   };
 
+  const sizeButtonClass =
+    'flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-100 border border-slate-700 transition-colors';
+
   return (
-    <div className="space-y-8">
+    <div
+      className={
+        panelSize === 'maximized'
+          ? 'fixed inset-0 z-40 overflow-y-auto bg-[var(--background)] p-4 sm:p-6 lg:p-8'
+          : ''
+      }
+    >
+    <div className={`space-y-8 ${panelSize === 'maximized' ? 'mx-auto max-w-[1600px]' : ''}`}>
       {/* Page Header */}
-      <div className="flex items-center justify-between">
+      <div className={`flex flex-wrap items-center justify-between gap-3 ${panelSize === 'minimized' ? 'glass-panel rounded-2xl border border-slate-800 px-4 py-3' : ''}`}>
         <div>
           <h2 className="text-lg font-bold text-slate-100 flex items-center gap-2">
             <Layers className="w-5 h-5 text-purple-400" />
             Campaign Configuration Module
           </h2>
           <p className="text-xs text-slate-400 mt-0.5">
-            Configure campaign assets, value propositions, and dynamic prompt overrides nested under parent clients.
+            {panelSize === 'minimized'
+              ? `${campaigns.length} campaign${campaigns.length === 1 ? '' : 's'} across ${clients.length} client${clients.length === 1 ? '' : 's'}`
+              : 'Configure campaign assets, value propositions, and dynamic prompt overrides nested under parent clients.'}
           </p>
         </div>
 
-        <button
-          onClick={() => handleOpenCreate()}
-          className="flex items-center gap-2 px-4 py-2 text-xs font-semibold rounded-xl bg-purple-600 hover:bg-purple-500 text-white shadow-lg shadow-purple-600/20 transition-all"
-        >
-          <Plus className="w-4 h-4" />
-          <span>New Campaign</span>
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          {panelSize !== 'minimized' && (
+            <button
+              type="button"
+              onClick={() => setSize('minimized')}
+              className={sizeButtonClass}
+              title="Minimize Campaign Configuration"
+            >
+              <Minimize2 className="w-3.5 h-3.5" />
+              <span>Minimize</span>
+            </button>
+          )}
+          {panelSize === 'minimized' && (
+            <button
+              type="button"
+              onClick={() => setSize('normal')}
+              className={sizeButtonClass}
+              title="Show Campaign Configuration"
+            >
+              <Maximize2 className="w-3.5 h-3.5" />
+              <span>Show</span>
+            </button>
+          )}
+          {panelSize === 'maximized' ? (
+            <button
+              type="button"
+              onClick={() => setSize('normal')}
+              className={sizeButtonClass}
+              title="Restore Campaign Configuration"
+            >
+              <Minimize2 className="w-3.5 h-3.5" />
+              <span>Restore</span>
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setSize('maximized')}
+              className={sizeButtonClass}
+              title="Maximize Campaign Configuration"
+            >
+              <Maximize2 className="w-3.5 h-3.5" />
+              <span>Maximize</span>
+            </button>
+          )}
+          <button
+            onClick={() => handleOpenCreate()}
+            className="flex items-center gap-2 px-4 py-2 text-xs font-semibold rounded-xl bg-purple-600 hover:bg-purple-500 text-white shadow-lg shadow-purple-600/20 transition-all"
+          >
+            <Plus className="w-4 h-4" />
+            <span>New Campaign</span>
+          </button>
+        </div>
       </div>
 
+      {panelSize !== 'minimized' && (
+      <>
       {/* Campaigns Grouped by Parent Client */}
       {clients.map((client) => {
         const clientCampaigns = campaigns.filter(
@@ -181,9 +260,11 @@ export default function CampaignsView({ clients, campaigns, onRefresh }: Campaig
                         </button>
                         <button
                           onClick={() => handleDelete(cmp.code)}
-                          className="p-1.5 rounded-lg text-rose-400/80 hover:text-rose-300 hover:bg-rose-950/30"
+                          className="action-btn action-retry"
+                          title={`Delete campaign ${cmp.name}`}
                         >
-                          <Trash2 className="w-4 h-4" />
+                          <Trash2 className="h-3.5 w-3.5" />
+                          Delete
                         </button>
                       </div>
                     </div>
@@ -220,6 +301,8 @@ export default function CampaignsView({ clients, campaigns, onRefresh }: Campaig
           </div>
         );
       })}
+      </>
+      )}
 
       {/* Modal: Create / Edit Campaign */}
       {isModalOpen && (
@@ -360,6 +443,7 @@ export default function CampaignsView({ clients, campaigns, onRefresh }: Campaig
           </div>
         </div>
       )}
+    </div>
     </div>
   );
 }

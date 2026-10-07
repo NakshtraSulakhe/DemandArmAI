@@ -22,18 +22,37 @@ import {
   Music,
   ExternalLink,
   Layers,
+  Columns2,
+  Maximize2,
+  Minimize2,
+  Ban,
+  MessageSquareQuote,
+  Lightbulb,
 } from 'lucide-react';
 import { ProcessingJobItem, CrmRecordingItem } from '../../lib/types';
+import CallAudioPlayer from './ui/CallAudioPlayer';
+import { coachingFromScore } from '../../lib/qa/agentCoaching';
+
+function highlightEntities(text: string, terms: string[]) {
+  const escaped = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const unique = [...new Set(terms.map((term) => term.trim()).filter((term) => term.length > 2))];
+  if (!unique.length) return escaped;
+  const pattern = new RegExp(`(${unique.map((term) => term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})`, 'gi');
+  return escaped.replace(pattern, '<mark class="rounded bg-indigo-500/25 px-0.5 text-indigo-100">$1</mark>');
+}
 
 interface LeadDetailModalProps {
   job: ProcessingJobItem | null;
   onClose: () => void;
   onRetryJob: (jobId: string) => Promise<void>;
-  onSaveManualEdit: (jobId: string, editedTranscript: string) => Promise<void>;
+  reviewerName: string;
+  onReviewerNameChange: (name: string) => void;
+  onSaveManualEdit: (jobId: string, editedTranscript: string, reviewerName: string) => Promise<void>;
   onOverrideQaStatus: (
     jobId: string,
     status: 'QUALIFIED' | 'NEEDS_REVIEW' | 'REJECTED',
-    notes: string
+    notes: string,
+    reviewerName: string
   ) => Promise<void>;
 }
 
@@ -41,10 +60,12 @@ export default function LeadDetailModal({
   job,
   onClose,
   onRetryJob,
+  reviewerName,
+  onReviewerNameChange,
   onSaveManualEdit,
   onOverrideQaStatus,
 }: LeadDetailModalProps) {
-  const [activeTab, setActiveTab] = useState<'qa' | 'raw' | 'edited' | 'audit'>('qa');
+  const [activeTab, setActiveTab] = useState<'qa' | 'raw' | 'edited' | 'compare' | 'audit'>('qa');
   const [isEditingTranscript, setIsEditingTranscript] = useState(false);
   const [editedText, setEditedText] = useState(job?.editedTranscript || '');
   const [overrideStatus, setOverrideStatus] = useState<'QUALIFIED' | 'NEEDS_REVIEW' | 'REJECTED'>(
@@ -57,6 +78,19 @@ export default function LeadDetailModal({
   const [copiedTranscript, setCopiedTranscript] = useState(false);
   const [copiedFeedback, setCopiedFeedback] = useState(false);
   const [selectedRecIdx, setSelectedRecIdx] = useState(0);
+  const [stretched, setStretched] = useState(false);
+
+  React.useEffect(() => {
+    setStretched(localStorage.getItem('qa-preview-stretched') === '1');
+  }, []);
+
+  const toggleStretch = () => {
+    setStretched((current) => {
+      const next = !current;
+      localStorage.setItem('qa-preview-stretched', next ? '1' : '0');
+      return next;
+    });
+  };
 
   // Sync state when job changes
   React.useEffect(() => {
@@ -93,10 +127,22 @@ export default function LeadDetailModal({
 
   const handleCopyFeedback = () => {
     if (!job) return;
-    const feedbackText =
-      job.qaResultJson?.supportingEvidence?.join('\n') ||
-      job.manualOverrideNotes ||
-      `QA Status: ${job.manualOverrideStatus || job.qaStatus || 'NEEDS_REVIEW'}\nOverall Score: ${job.qaResultJson?.overallScore || 85}%`;
+    const coaching = coachingFromScore(job.qaResultJson);
+    const feedbackText = coaching
+      ? [
+          coaching.summary,
+          '',
+          'Avoid',
+          ...coaching.avoid.map((line) => `- ${line}`),
+          '',
+          'Say this instead',
+          ...coaching.sayInstead.map((line) => `- ${line}`),
+          '',
+          'How to improve the next call',
+          ...coaching.improve.map((line) => `- ${line}`),
+        ].join('\n')
+      : job.manualOverrideNotes ||
+        `QA Status: ${job.manualOverrideStatus || job.qaStatus || 'Not scored'}\nOverall Score: ${job.qaResultJson?.overallScore ?? 'Not scored'}`;
     navigator.clipboard.writeText(feedbackText);
     setCopiedFeedback(true);
     setTimeout(() => setCopiedFeedback(false), 2000);
@@ -131,7 +177,7 @@ export default function LeadDetailModal({
     if (!job) return;
     setIsSavingEdit(true);
     try {
-      await onSaveManualEdit(job.id, editedText);
+      await onSaveManualEdit(job.id, editedText, reviewerName.trim());
       setIsEditingTranscript(false);
     } finally {
       setIsSavingEdit(false);
@@ -140,9 +186,10 @@ export default function LeadDetailModal({
 
   const handleApplyOverride = async () => {
     if (!job) return;
+    if (!reviewerName.trim()) return;
     setIsSubmittingOverride(true);
     try {
-      await onOverrideQaStatus(job.id, overrideStatus, overrideNotes);
+      await onOverrideQaStatus(job.id, overrideStatus, overrideNotes, reviewerName.trim());
     } finally {
       setIsSubmittingOverride(false);
     }
@@ -157,7 +204,7 @@ export default function LeadDetailModal({
         }
       }}
     >
-      <div className="relative w-full max-w-5xl bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh]">
+      <div className={`relative bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl overflow-hidden flex flex-col ${stretched ? 'h-[calc(100vh-2rem)] w-[calc(100vw-2rem)] max-w-none' : 'w-full max-w-5xl max-h-[92vh]'}`}>
         {/* Modal Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-800 bg-slate-900/90">
           <div className="flex items-center gap-3">
@@ -198,14 +245,28 @@ export default function LeadDetailModal({
                 )}
               </div>
               <p className="text-xs text-slate-400 mt-0.5">
+                {job.status.replace(/_/g, ' ')}
+                {' · '}
                 Client Code: <strong className="text-slate-200">{job.lead?.clientCode}</strong> | Campaign Code:{' '}
                 <strong className="text-slate-200">{job.lead?.campaignCode}</strong>
                 {job.lead?.agentName && <span> | Agent: <strong className="text-slate-200">{job.lead.agentName}</strong></span>}
               </p>
+              {job.stepError && (
+                <p className="text-xs text-amber-300 mt-1">{job.stepError}</p>
+              )}
             </div>
           </div>
 
           <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={toggleStretch}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition-all"
+              title={stretched ? 'Restore the preview size' : 'Stretch the preview window'}
+            >
+              {stretched ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
+              <span>{stretched ? 'Restore' : 'Stretch'}</span>
+            </button>
             <button
               onClick={handleRetry}
               disabled={isRetrying}
@@ -276,20 +337,16 @@ export default function LeadDetailModal({
             </div>
 
             {currentRec ? (
-              <div className="flex items-center gap-2">
-                <audio
-                  controls
-                  className="w-full h-8 rounded bg-slate-800 text-xs flex-1"
-                  src={audioStreamUrl}
-                >
-                  Your browser does not support audio element.
-                </audio>
+              <div className="flex items-start gap-2">
+                <div className="min-w-0 flex-1">
+                  <CallAudioPlayer src={audioStreamUrl} />
+                </div>
                 <a
                   href={currentRec.download_url || currentRec.url}
                   target="_blank"
                   rel="noreferrer"
                   download
-                  className="p-1.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors"
+                  className="btn-ghost mt-1"
                   title="Download recording file"
                 >
                   <Download className="w-3.5 h-3.5" />
@@ -328,6 +385,18 @@ export default function LeadDetailModal({
           </button>
 
           <button
+            onClick={() => setActiveTab('compare')}
+            className={`flex items-center gap-2 py-3 px-4 text-xs font-semibold border-b-2 transition-all ${
+              activeTab === 'compare'
+                ? 'border-indigo-400 text-indigo-300'
+                : 'border-transparent text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <Columns2 className="w-4 h-4" />
+            Side by side
+          </button>
+
+          <button
             onClick={() => setActiveTab('raw')}
             className={`flex items-center gap-2 py-3 px-4 text-xs font-semibold border-b-2 transition-all ${
               activeTab === 'raw'
@@ -358,49 +427,122 @@ export default function LeadDetailModal({
           {activeTab === 'qa' && (
             <div className="space-y-6">
               {/* QA Summary Banner */}
-              <div className="glass-card p-4 rounded-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-                <div>
-                  <div className="flex items-center gap-3">
-                    <h3 className="text-sm font-bold text-slate-100">Qualification Score</h3>
-                    <span className="text-2xl font-black text-blue-400">
-                      {job.qaResultJson?.overallScore ?? 0}%
-                    </span>
+              <div className="glass-card p-4 rounded-xl flex flex-col gap-4">
+                <div className="flex items-center gap-4">
+                  <svg viewBox="0 0 72 72" className="h-16 w-16 shrink-0" aria-label={`Score ${job.qaResultJson?.overallScore ?? 0} percent`}>
+                    <circle cx="36" cy="36" r="28" fill="none" stroke="rgba(148,163,184,0.25)" strokeWidth="6" />
+                    <circle
+                      cx="36"
+                      cy="36"
+                      r="28"
+                      fill="none"
+                      stroke="url(#scoreGradient)"
+                      strokeWidth="6"
+                      strokeLinecap="round"
+                      strokeDasharray={2 * Math.PI * 28}
+                      strokeDashoffset={2 * Math.PI * 28 * (1 - (job.qaResultJson?.overallScore ?? 0) / 100)}
+                      transform="rotate(-90 36 36)"
+                    />
+                    <defs>
+                      <linearGradient id="scoreGradient" x1="0" y1="0" x2="1" y2="1">
+                        <stop offset="0%" stopColor="#6366f1" />
+                        <stop offset="100%" stopColor="#0ea5e9" />
+                      </linearGradient>
+                    </defs>
+                    <text x="36" y="40" textAnchor="middle" className="fill-slate-50 text-[13px] font-bold">
+                      {job.qaResultJson?.overallScore ?? 0}
+                    </text>
+                  </svg>
+                  <div>
+                    <h3 className="text-sm font-extrabold tracking-tight text-slate-50">Qualification score</h3>
+                    <p className="mt-1 text-xs text-slate-400">Scored against this client’s criteria and any campaign override.</p>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      <button type="button" onClick={handleCopyTranscript} className="btn-secondary">
+                        {copiedTranscript ? 'Copied transcript' : 'Copy transcript'}
+                      </button>
+                      <button type="button" onClick={handleCopyFeedback} className="btn-secondary">
+                        {copiedFeedback ? 'Copied QA notes' : 'Copy QA notes'}
+                      </button>
+                    </div>
                   </div>
-                  <p className="text-xs text-slate-400 mt-1">
-                    Evaluated against Client standard prompt & Campaign qualification overrides.
-                  </p>
                 </div>
 
-                {/* Manual Override Controls */}
-                <div className="flex items-center gap-2 bg-slate-900 p-2 rounded-xl border border-slate-800 w-full md:w-auto">
-                  <span className="text-xs font-medium text-slate-400 shrink-0 ml-1">Override:</span>
-                  <select
-                    value={overrideStatus}
-                    onChange={(e: any) => setOverrideStatus(e.target.value)}
-                    className="bg-slate-800 border border-slate-700 text-xs text-slate-200 rounded-lg px-2.5 py-1.5 focus:outline-none"
-                  >
-                    <option value="QUALIFIED">QUALIFIED</option>
-                    <option value="NEEDS_REVIEW">NEEDS REVIEW</option>
-                    <option value="REJECTED">REJECTED</option>
-                  </select>
-
+                <div className="grid gap-2 rounded-xl border border-white/10 bg-[rgba(10,15,29,0.65)] p-2 lg:grid-cols-[auto_1fr_auto_auto]">
                   <input
                     type="text"
-                    placeholder="Audit reason notes..."
+                    placeholder="Reviewer name"
+                    value={reviewerName}
+                    onChange={(e) => onReviewerNameChange(e.target.value)}
+                    className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-xs text-slate-100 focus:outline-none"
+                  />
+                  <div className="grid grid-cols-3 gap-1">
+                    {([
+                      ['QUALIFIED', 'Qualified', 'bg-emerald-500/20 text-emerald-300 border-emerald-400/40'],
+                      ['NEEDS_REVIEW', 'Needs review', 'bg-amber-500/20 text-amber-200 border-amber-400/40'],
+                      ['REJECTED', 'Rejected', 'bg-rose-500/20 text-rose-300 border-rose-400/40'],
+                    ] as const).map(([value, label, tone]) => (
+                      <button
+                        key={value}
+                        type="button"
+                        onClick={() => setOverrideStatus(value)}
+                        className={`rounded-lg border px-2 py-1.5 text-[11px] font-bold ${
+                          overrideStatus === value ? tone : 'border-transparent text-slate-400 hover:bg-slate-800'
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                  <input
+                    type="text"
+                    placeholder="Reason for the decision"
                     value={overrideNotes}
                     onChange={(e) => setOverrideNotes(e.target.value)}
-                    className="bg-slate-800 border border-slate-700 text-xs text-slate-200 rounded-lg px-3 py-1.5 flex-1 md:w-48 focus:outline-none"
+                    className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-xs text-slate-100 focus:outline-none"
                   />
-
                   <button
                     onClick={handleApplyOverride}
-                    disabled={isSubmittingOverride}
-                    className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold rounded-lg transition-colors disabled:opacity-50 shrink-0"
+                    disabled={isSubmittingOverride || !reviewerName.trim()}
+                    className="btn-primary"
                   >
-                    {isSubmittingOverride ? 'Saving...' : 'Save Audit'}
+                    {isSubmittingOverride ? 'Saving...' : 'Save decision'}
                   </button>
                 </div>
               </div>
+
+              {(() => {
+                const coaching = coachingFromScore(job.qaResultJson);
+                if (!coaching) return null;
+                const blocks = [
+                  { title: 'Avoid on this call', items: coaching.avoid, icon: <Ban className="h-4 w-4 text-rose-300" />, tone: 'border-rose-400/30' },
+                  { title: 'Say this instead', items: coaching.sayInstead, icon: <MessageSquareQuote className="h-4 w-4 text-sky-300" />, tone: 'border-sky-400/30' },
+                  { title: 'How to improve the next call', items: coaching.improve, icon: <Lightbulb className="h-4 w-4 text-amber-300" />, tone: 'border-amber-400/30' },
+                ];
+                return (
+                  <div className="space-y-3">
+                    <div>
+                      <h4 className="text-xs font-bold uppercase tracking-wider text-slate-300">Agent coaching from this call</h4>
+                      <p className="mt-1 text-sm leading-relaxed text-slate-200">{coaching.summary}</p>
+                    </div>
+                    <div className="grid gap-3 lg:grid-cols-3">
+                      {blocks.map((block) => (
+                        <div key={block.title} className={`rounded-xl border bg-[rgba(10,15,29,0.45)] p-3 ${block.tone}`}>
+                          <div className="mb-2 flex items-center gap-2 text-xs font-bold text-slate-100">
+                            {block.icon}
+                            {block.title}
+                          </div>
+                          <ul className="space-y-2 text-xs leading-relaxed text-slate-300">
+                            {block.items.length === 0 && <li>Nothing specific from this recording.</li>}
+                            {block.items.map((item) => (
+                              <li key={item}>{item}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()}
 
               {/* Checklist Table */}
               <div>
@@ -474,10 +616,44 @@ export default function LeadDetailModal({
                     ))}
                     {(!job.qaResultJson?.reviewReasons?.length &&
                       !job.qaResultJson?.missingRequirements?.length) && (
-                      <li className="text-slate-500 italic">All qualification parameters satisfied!</li>
+                      <li className="text-slate-500 italic">
+                        {job.qaResultJson ? 'No review notes.' : 'This lead has not been scored yet.'}
+                      </li>
                     )}
                   </ul>
                 </div>
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'compare' && (
+            <div className="grid gap-4 lg:grid-cols-2">
+              <div className="rounded-xl border border-white/10 bg-[rgba(10,15,29,0.55)] p-4">
+                <h3 className="mb-3 text-xs font-bold uppercase tracking-wider text-slate-400">Raw STT transcript</h3>
+                <div className="space-y-2">
+                  {(job.rawTranscript?.utterances || []).length === 0 && (
+                    <p className="text-xs text-slate-500">No raw transcript yet.</p>
+                  )}
+                  {job.rawTranscript?.utterances?.map((utt, idx) => (
+                    <div key={idx} className={`max-w-[90%] rounded-2xl px-3 py-2 text-xs leading-relaxed ${idx % 2 === 0 ? 'bg-slate-800 text-slate-100' : 'ml-auto bg-indigo-500/15 text-indigo-100'}`}>
+                      <div className="mb-1 text-[10px] font-bold uppercase text-slate-400">{utt.speakerName || `Speaker ${utt.speakerTag}`}</div>
+                      {utt.transcript}
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div className="rounded-xl border border-white/10 bg-[rgba(10,15,29,0.55)] p-4">
+                <h3 className="mb-3 text-xs font-bold uppercase tracking-wider text-slate-400">AI cleaned transcript</h3>
+                <div
+                  className="whitespace-pre-wrap text-xs leading-relaxed text-slate-200"
+                  dangerouslySetInnerHTML={{
+                    __html: highlightEntities(job.editedTranscript || 'No edited transcript yet.', [
+                      job.lead?.contactName || '',
+                      job.lead?.companyName || '',
+                      job.lead?.country || '',
+                    ]),
+                  }}
+                />
               </div>
             </div>
           )}

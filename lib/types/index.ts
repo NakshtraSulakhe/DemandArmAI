@@ -106,13 +106,21 @@ export interface QaChecklistItem {
   notes?: string;
 }
 
+export interface AgentCoaching {
+  summary: string;
+  avoid: string[];
+  sayInstead: string[];
+  improve: string[];
+}
+
 export interface QaResultData {
-  qualificationStatus: 'QUALIFIED' | 'NEEDS_REVIEW' | 'UNQUALIFIED';
+  qualificationStatus: 'QUALIFIED' | 'NEEDS_REVIEW' | 'REJECTED';
   overallScore: number; // 0 - 100
   checklist: QaChecklistItem[];
   supportingEvidence: string[];
   missingRequirements: string[];
   reviewReasons: string[];
+  agentCoaching?: AgentCoaching;
   evaluatedAt: string;
   metadata: Record<string, any>;
 }
@@ -138,7 +146,7 @@ export interface ProcessingJobItem {
   rawTranscript?: RawTranscriptData;
   editedTranscript?: string;
   promptVersionUsed?: string;
-  qaStatus?: 'QUALIFIED' | 'NEEDS_REVIEW' | 'UNQUALIFIED';
+  qaStatus?: 'QUALIFIED' | 'NEEDS_REVIEW' | 'REJECTED';
   qaResultJson?: QaResultData;
   manualOverrideStatus?: 'QUALIFIED' | 'NEEDS_REVIEW' | 'REJECTED';
   manualOverrideNotes?: string;
@@ -182,6 +190,8 @@ export interface SystemSettingsConfig {
   id: string;
   crmEndpoint: string;
   crmApiKey: string;
+  webhookSecret?: string;
+  crmWritebackUrl?: string;
   sttProvider?: string;
   sttApiKey?: string;
   assemblyAiApiKey?: string;
@@ -272,6 +282,21 @@ export interface DurationDistributionSummary {
   avgDurationSeconds: number;
 }
 
+export interface LeadTokenUsageItem {
+  leadRef: string;
+  contactName: string;
+  companyName: string;
+  campaignName: string;
+  clientCode: string;
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  audioSeconds: number;
+  geminiCost: number;
+  speechCost: number;
+  leadCost: number;
+}
+
 export interface AnalyticsSummary {
   totalRecordingsProcessed: number;
   totalRawTranscripts: number;
@@ -296,6 +321,18 @@ export interface AnalyticsSummary {
   weeklyGrowthPercent: number;
   avgCostPerLead: number;
   avgCostPerQualifiedLead: number;
+  leadsWithTokenUsage: number;
+  leadsWithAudio: number;
+  avgInputTokensPerLead: number;
+  avgOutputTokensPerLead: number;
+  avgTokensPerLead: number;
+  geminiCostPerLead: number;
+  sttCostPerLead: number;
+  costPerProcessedLead: number;
+  sttCostPerMinute: number;
+  geminiInputCostPer1M: number;
+  geminiOutputCostPer1M: number;
+  usdToInrRate: number;
 
   dailyActivity: { date: string; count: number }[];
   rawVsEdited: { date: string; raw: number; edited: number }[];
@@ -309,6 +346,7 @@ export interface AnalyticsSummary {
   clientPerformance: ClientPerformanceItem[];
   campaignPerformance: CampaignPerformanceItem[];
 
+  leadTokenUsage: LeadTokenUsageItem[];
   clientAnalytics: { clientCode: string; clientName: string; count: number; qualifiedCount: number }[];
   campaignAnalytics: { campaignCode: string; campaignName: string; count: number }[];
   statusDistribution: { status: string; count: number }[];

@@ -11,6 +11,8 @@ import CampaignsView from './components/CampaignsView';
 import AnalyticsView from './components/AnalyticsView';
 import SettingsView from './components/SettingsView';
 import LeadDetailModal from './components/LeadDetailModal';
+import ToastStack, { ToastItem } from './components/ui/Toast';
+import SignInGate from './components/SignInGate';
 import { ClientConfig, CampaignConfig, ProcessingJobItem } from '../lib/types';
 
 export default function Home() {
@@ -90,6 +92,22 @@ export default function Home() {
   const [isSyncing, setIsSyncing] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [isProcessingPaused, setIsProcessingPaused] = useState(false);
+  const [toasts, setToasts] = useState<ToastItem[]>([]);
+  const [reviewerName, setReviewerName] = useState('');
+  const [authReady, setAuthReady] = useState(false);
+  const [signInRequired, setSignInRequired] = useState(false);
+  const [showOpenBanner, setShowOpenBanner] = useState(false);
+  const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
+  const [commandOpen, setCommandOpen] = useState(false);
+  const [commandQuery, setCommandQuery] = useState('');
+
+  const notify = useCallback((tone: ToastItem['tone'], message: string) => {
+    const id = `${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    setToasts((current) => [...current.slice(-3), { id, tone, message }]);
+    setTimeout(() => {
+      setToasts((current) => current.filter((toast) => toast.id !== id));
+    }, 5000);
+  }, []);
 
   // Fetch initial pipeline pause status
   const fetchPauseStatus = useCallback(async () => {
@@ -113,7 +131,7 @@ export default function Home() {
         fetchJobs();
       }
     } catch (err: any) {
-      alert(`Error toggling pipeline pause: ${err.message}`);
+      notify('warning', `Could not change the pipeline: ${err.message}`);
     }
   };
 
@@ -173,7 +191,7 @@ export default function Home() {
       return fetchQueueData();
     }
     try {
-      const url = new URL('/api/jobs', window.location.href);
+      const url = new URL(activeTab === 'all-leads' ? '/api/leads' : '/api/jobs', window.location.href);
       if (selectedClientCode !== 'ALL') url.searchParams.set('clientCode', selectedClientCode);
       if (selectedCampaignCode !== 'ALL') url.searchParams.set('campaignCode', selectedCampaignCode);
       if (statusFilter !== 'ALL') url.searchParams.set('status', statusFilter);
@@ -244,6 +262,17 @@ export default function Home() {
   };
 
   useEffect(() => {
+    const savedReviewer = localStorage.getItem('qa-reviewer-name') || '';
+    setReviewerName(savedReviewer);
+    fetch('/api/health').catch(() => undefined);
+    fetch('/api/auth/session')
+      .then((res) => res.json())
+      .then((data) => {
+        setSignInRequired(!!data.required && !data.authenticated);
+        setShowOpenBanner(!data.required && sessionStorage.getItem('hide-open-banner') !== '1');
+      })
+      .catch(() => undefined)
+      .finally(() => setAuthReady(true));
     fetchConfigurations();
     fetchPauseStatus();
     updateQueueBadge();
@@ -265,11 +294,36 @@ export default function Home() {
 
   useEffect(() => {
     const interval = setInterval(() => {
+      if (document.visibilityState !== 'visible') return;
       fetchJobsRef.current();
       updateBadgeRef.current();
-    }, 10000);
+    }, 8000);
 
     return () => clearInterval(interval);
+  }, []);
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      const typing = target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable);
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault();
+        setCommandOpen(true);
+        return;
+      }
+      if (typing || event.metaKey || event.ctrlKey || event.altKey) return;
+      const tabs: Record<string, NavTab> = {
+        '1': 'dashboard',
+        '2': 'all-leads',
+        '3': 'queue',
+        '4': 'analytics',
+        '5': 'configuration',
+        '6': 'settings',
+      };
+      if (tabs[event.key]) setActiveTab(tabs[event.key]);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
   }, []);
 
   // Sync CRM Leads Action
@@ -285,11 +339,13 @@ export default function Home() {
       if (data.success) {
         await fetchJobs();
         await updateQueueBadge();
+        setLastSyncedAt(new Date());
+        notify('success', 'CRM sync finished. New leads will show up in the queue.');
       } else {
-        console.warn(`CRM Sync warning: ${data.error}`);
+        notify('warning', data.error || 'CRM sync did not finish.');
       }
     } catch (err: any) {
-      console.warn(`CRM Sync network issue: ${err.message}`);
+      notify('warning', `CRM sync failed: ${err.message}`);
     } finally {
       setIsSyncing(false);
     }
@@ -302,16 +358,29 @@ export default function Home() {
       const res = await fetch('/api/jobs/process', { method: 'POST' });
       const data = await res.json();
       if (data.success) {
+        notify('info', 'Queue started. This page updates as each lead finishes.');
         await fetchJobs();
         await updateQueueBadge();
       } else {
-        alert(`Pipeline Worker Error: ${data.error}`);
+        notify('warning', data.error || 'The queue did not start.');
       }
     } catch (err: any) {
-      alert(`Pipeline Worker Error: ${err.message}`);
+      notify('warning', `The queue did not start: ${err.message}`);
     } finally {
       setIsProcessing(false);
     }
+  };
+
+  const handleJobFinished = async (job: ProcessingJobItem) => {
+    await fetchJobs();
+    await updateQueueBadge();
+    setSelectedJob(job);
+    if (job.status === 'FAILED' || job.stepError) {
+      notify('warning', job.stepError || 'This lead did not finish.');
+      return;
+    }
+    const summary = job.qaResultJson?.agentCoaching?.summary;
+    notify('success', summary || 'This call is scored. Open the lead to read the agent coaching.');
   };
 
   // Retry Single Job
@@ -323,29 +392,30 @@ export default function Home() {
         await fetchJobs();
         await updateQueueBadge();
       } else {
-        alert(`Retry Error: ${data.error}`);
+        notify('warning', data.error || 'Retry failed.');
       }
     } catch (err: any) {
-      alert(`Retry Error: ${err.message}`);
+      notify('warning', `Retry failed: ${err.message}`);
     }
   };
 
   // Save Manual Transcript Edit
-  const handleSaveManualEdit = async (jobId: string, editedTranscript: string) => {
+  const handleSaveManualEdit = async (jobId: string, editedTranscript: string, reviewedBy: string) => {
     try {
       const res = await fetch(`/api/jobs/${jobId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ editedTranscript, reviewedBy: 'Admin User' }),
+        body: JSON.stringify({ editedTranscript, reviewedBy }),
       });
       const data = await res.json();
       if (data.success) {
+        notify('success', 'Transcript saved.');
         await fetchJobs();
       } else {
-        alert(`Error saving transcript edit: ${data.error}`);
+        notify('warning', data.error || 'Could not save the transcript.');
       }
     } catch (err: any) {
-      alert(`Error saving transcript edit: ${err.message}`);
+      notify('warning', `Could not save the transcript: ${err.message}`);
     }
   };
 
@@ -353,7 +423,8 @@ export default function Home() {
   const handleOverrideQaStatus = async (
     jobId: string,
     manualOverrideStatus: 'QUALIFIED' | 'NEEDS_REVIEW' | 'REJECTED',
-    manualOverrideNotes: string
+    manualOverrideNotes: string,
+    reviewedBy: string
   ) => {
     try {
       const res = await fetch(`/api/jobs/${jobId}`, {
@@ -362,22 +433,31 @@ export default function Home() {
         body: JSON.stringify({
           manualOverrideStatus,
           manualOverrideNotes,
-          reviewedBy: 'Admin QA Lead',
+          reviewedBy,
         }),
       });
       const data = await res.json();
       if (data.success) {
+        notify('success', `Saved ${manualOverrideStatus.replace(/_/g, ' ')} by ${reviewedBy}.`);
         await fetchJobs();
       } else {
-        alert(`Error overriding QA status: ${data.error}`);
+        notify('warning', data.error || 'Could not save the decision.');
       }
     } catch (err: any) {
-      alert(`Error overriding QA status: ${err.message}`);
+      notify('warning', `Could not save the decision: ${err.message}`);
     }
   };
 
+  if (!authReady) {
+    return <div className="min-h-screen bg-slate-950" />;
+  }
+
+  if (signInRequired) {
+    return <SignInGate onSuccess={() => setSignInRequired(false)} />;
+  }
+
   return (
-    <div className="min-h-screen flex bg-slate-950 text-slate-100 font-sans selection:bg-blue-500 selection:text-white">
+    <div className="min-h-screen flex bg-transparent text-slate-100 font-sans selection:bg-indigo-500 selection:text-white">
       {/* Persistent Collapsible Sidebar */}
       <Sidebar
         activeTab={activeTab}
@@ -387,6 +467,7 @@ export default function Home() {
         mobileOpen={mobileOpen}
         setMobileOpen={setMobileOpen}
         queueCount={queueStats.activeCount}
+        pipelineRunning={!isProcessingPaused}
         theme={theme}
         onToggleTheme={toggleTheme}
       />
@@ -407,9 +488,25 @@ export default function Home() {
           isCollapsed={isCollapsed}
           theme={theme}
           onToggleTheme={toggleTheme}
+          lastSyncedAt={lastSyncedAt}
         />
 
         <main className="flex-1 transition-all duration-300 p-4 sm:p-6 lg:p-8 max-w-[1600px] w-full mx-auto">
+          {showOpenBanner && (
+            <div className="mb-4 flex items-start justify-between gap-3 rounded-xl border border-amber-700/50 bg-amber-950/40 px-3 py-2 text-xs text-amber-100">
+              <p>Anyone who can open this address can use the console. Set ADMIN_PASSWORD on the server to require a sign-in.</p>
+              <button
+                type="button"
+                className="shrink-0 font-semibold"
+                onClick={() => {
+                  sessionStorage.setItem('hide-open-banner', '1');
+                  setShowOpenBanner(false);
+                }}
+              >
+                Dismiss
+              </button>
+            </div>
+          )}
           {/* TAB 1: Analytical Dashboard */}
           {activeTab === 'dashboard' && (
             <DashboardView
@@ -452,6 +549,8 @@ export default function Home() {
               }}
               onSelectJob={(job) => setSelectedJob(job)}
               onRetryJob={handleRetryJob}
+              onJobFinished={handleJobFinished}
+              onActionError={(message) => notify('warning', message)}
               isProcessingPaused={isProcessingPaused}
               onTogglePause={handleTogglePause}
             />
@@ -480,6 +579,8 @@ export default function Home() {
               onPageChange={(page) => setCurrentPage(page)}
               onSelectJob={(job) => setSelectedJob(job)}
               onRetryJob={handleRetryJob}
+              onJobFinished={handleJobFinished}
+              onActionError={(message) => notify('warning', message)}
               onProcessQueue={handleProcessQueue}
               isProcessing={isProcessing}
               isProcessingPaused={isProcessingPaused}
@@ -532,10 +633,54 @@ export default function Home() {
           job={selectedJob}
           onClose={() => setSelectedJob(null)}
           onRetryJob={handleRetryJob}
+          reviewerName={reviewerName}
+          onReviewerNameChange={(name) => {
+            setReviewerName(name);
+            localStorage.setItem('qa-reviewer-name', name);
+          }}
           onSaveManualEdit={handleSaveManualEdit}
           onOverrideQaStatus={handleOverrideQaStatus}
         />
       )}
+      {commandOpen && (
+        <div className="fixed inset-0 z-[70] flex items-start justify-center bg-slate-950/70 px-4 pt-24 backdrop-blur-sm" onClick={() => setCommandOpen(false)}>
+          <div className="glass-panel w-full max-w-lg rounded-2xl p-4" onClick={(event) => event.stopPropagation()}>
+            <p className="text-xs font-bold uppercase tracking-wide text-slate-400">Search leads</p>
+            <input
+              autoFocus
+              value={commandQuery}
+              onChange={(event) => setCommandQuery(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  setSearchQuery(commandQuery);
+                  setActiveTab('all-leads');
+                  setCommandOpen(false);
+                }
+                if (event.key === 'Escape') setCommandOpen(false);
+              }}
+              placeholder="Company, contact, or lead reference"
+              className="mt-2 w-full rounded-xl border border-white/10 bg-[rgba(10,15,29,0.65)] px-3 py-2 text-sm text-slate-100 focus:outline-none"
+            />
+            <div className="mt-3 grid grid-cols-2 gap-2">
+              {(['dashboard', 'all-leads', 'queue', 'analytics', 'configuration', 'settings'] as NavTab[]).map((tab, index) => (
+                <button
+                  key={tab}
+                  type="button"
+                  className="btn-secondary justify-between"
+                  onClick={() => {
+                    setActiveTab(tab);
+                    setCommandOpen(false);
+                  }}
+                >
+                  <span className="capitalize">{tab.replace('-', ' ')}</span>
+                  <span className="text-[10px] text-slate-500">{index + 1}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+      <ToastStack toasts={toasts} onDismiss={(id) => setToasts((current) => current.filter((toast) => toast.id !== id))} />
     </div>
   );
 }

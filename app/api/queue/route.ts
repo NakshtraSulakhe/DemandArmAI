@@ -18,16 +18,21 @@ export async function GET(req: Request) {
     const allJobs = dbStore.getJobs();
 
     // Calculate queue metrics across all jobs
-    const todayStr = new Date().toISOString().slice(0, 10);
+    const now = new Date();
+    const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
 
     const waitingCount = allJobs.filter((j) => j.status === 'PENDING' || (j.status as any) === 'QUEUED').length;
     const processingCount = allJobs.filter((j) =>
       ['AUDIO_RETRIEVED', 'TRANSCRIBING', 'AI_EDITING', 'QA_EVALUATING'].includes(j.status)
     ).length;
     const failedCount = allJobs.filter((j) => j.status === 'FAILED').length;
-    const completedTodayCount = allJobs.filter((j) =>
-      j.status === 'COMPLETED' && (j.updatedAt || '').slice(0, 10) === todayStr
-    ).length;
+    const completedTodayCount = allJobs.filter((j) => {
+      if (j.status !== 'COMPLETED' || !j.updatedAt) return false;
+      const updated = new Date(j.updatedAt);
+      if (Number.isNaN(updated.getTime())) return false;
+      const key = `${updated.getFullYear()}-${String(updated.getMonth() + 1).padStart(2, '0')}-${String(updated.getDate()).padStart(2, '0')}`;
+      return key === todayStr;
+    }).length;
     const activeCount = waitingCount + processingCount;
 
     const queueStats = {
@@ -49,11 +54,11 @@ export async function GET(req: Request) {
     }
 
     if (clientCode && clientCode !== 'ALL') {
-      filteredJobs = filteredJobs.filter((j) => j.lead?.clientCode.toUpperCase() === clientCode.toUpperCase());
+      filteredJobs = filteredJobs.filter((j) => (j.lead?.clientCode || '').toUpperCase() === clientCode.toUpperCase());
     }
 
     if (campaignCode && campaignCode !== 'ALL') {
-      filteredJobs = filteredJobs.filter((j) => j.lead?.campaignCode.toUpperCase() === campaignCode.toUpperCase());
+      filteredJobs = filteredJobs.filter((j) => (j.lead?.campaignCode || '').toUpperCase() === campaignCode.toUpperCase());
     }
 
     if (search) {

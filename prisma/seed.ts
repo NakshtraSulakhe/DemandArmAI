@@ -11,8 +11,11 @@ async function main() {
     update: {},
     create: {
       id: 'global',
-      crmEndpoint: 'https://app.tarajglobal.com/demandflowbridge/api/get_leads.php',
-      crmApiKey: 'crm_sec_demandarm_live_2026',
+      crmEndpoint: '',
+      crmApiKey: '',
+      webhookSecret: '',
+      crmWritebackUrl: '',
+      isProcessingPaused: false,
       gcsBucketName: 'qtranscript-recordings',
       gcpProjectId: 'demandarm-ai-qa',
       gcpClientEmail: '',

@@ -1,8 +1,10 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '../../../lib/db/prisma';
+import { ensurePipelineStarted } from '../../../lib/jobs/pipelineScheduler';
 
 export async function GET() {
   try {
+    ensurePipelineStarted();
     const settingsCount = await prisma.systemSettings.count();
     const clientsCount = await prisma.client.count();
     const campaignsCount = await prisma.campaign.count();
@@ -12,8 +14,8 @@ export async function GET() {
     return NextResponse.json({
       status: 'OK',
       database: 'CONNECTED',
-      engine: 'SQLite (Prisma ORM)',
-      databaseName: 'dev.db',
+      engine: 'MySQL',
+      databaseName: 'configured DATABASE_URL',
       counts: {
         systemSettings: settingsCount,
         clients: clientsCount,

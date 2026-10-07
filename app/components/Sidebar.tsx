@@ -13,8 +13,6 @@ import {
   Shield,
   Sun,
   Moon,
-  Building2,
-  FileCode2,
 } from 'lucide-react';
 
 export type NavTab = 'dashboard' | 'all-leads' | 'queue' | 'configuration' | 'analytics' | 'settings';
@@ -27,6 +25,7 @@ interface SidebarProps {
   mobileOpen: boolean;
   setMobileOpen: (open: boolean) => void;
   queueCount?: number;
+  pipelineRunning?: boolean;
   theme?: 'dark' | 'light';
   onToggleTheme?: () => void;
 }
@@ -39,69 +38,21 @@ export default function Sidebar({
   mobileOpen,
   setMobileOpen,
   queueCount = 0,
+  pipelineRunning = false,
   theme = 'dark',
   onToggleTheme,
 }: SidebarProps) {
-  const mainNavItems: { id: NavTab; label: string; icon: React.ReactNode; badge?: number }[] = [
-    { id: 'dashboard', label: 'Dashboard', icon: <LayoutDashboard className="w-4 h-4" /> },
-    { id: 'all-leads', label: 'All Leads', icon: <Users className="w-4 h-4" /> },
-    { id: 'queue', label: 'Queue', icon: <Layers className="w-4 h-4" />, badge: queueCount },
-    { id: 'analytics', label: 'Analytics', icon: <BarChart2 className="w-4 h-4" /> },
+  const mainNavItems: { id: NavTab; label: string; icon: React.ReactNode; badge?: number; shortcut: string }[] = [
+    { id: 'dashboard', label: 'Dashboard', icon: <LayoutDashboard className="w-4 h-4" />, shortcut: '1' },
+    { id: 'all-leads', label: 'All Leads', icon: <Users className="w-4 h-4" />, shortcut: '2' },
+    { id: 'queue', label: 'Queue', icon: <Layers className="w-4 h-4" />, badge: queueCount, shortcut: '3' },
+    { id: 'analytics', label: 'Analytics', icon: <BarChart2 className="w-4 h-4" />, shortcut: '4' },
+    { id: 'configuration', label: 'Configuration', icon: <Sliders className="w-4 h-4" />, shortcut: '5' },
+    { id: 'settings', label: 'Settings', icon: <Settings className="w-4 h-4" />, shortcut: '6' },
   ];
-
-  const configNavItems: { id: NavTab; label: string; icon: React.ReactNode }[] = [
-    { id: 'configuration', label: 'Configuration', icon: <Sliders className="w-4 h-4" /> },
-  ];
-
-  const systemNavItems: { id: NavTab; label: string; icon: React.ReactNode }[] = [
-    { id: 'settings', label: 'Settings', icon: <Settings className="w-4 h-4" /> },
-  ];
-
-  const renderNavGroup = (title: string, items: typeof mainNavItems) => (
-    <div className="space-y-1">
-      {!isCollapsed && (
-        <div className="px-3 pt-3 pb-1 text-[10px] font-bold uppercase tracking-wider text-slate-500">
-          {title}
-        </div>
-      )}
-      {items.map((item) => {
-        const isActive = activeTab === item.id;
-        return (
-          <button
-            key={item.id}
-            onClick={() => {
-              setActiveTab(item.id);
-              setMobileOpen(false);
-            }}
-            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
-              isActive
-                ? 'bg-blue-600 text-white shadow-md shadow-blue-600/25'
-                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
-            } ${isCollapsed ? 'justify-center px-0' : ''}`}
-            title={isCollapsed ? item.label : undefined}
-          >
-            <span className={`${isActive ? 'text-white' : 'text-slate-400'}`}>{item.icon}</span>
-            {!isCollapsed && <span className="truncate flex-1 text-left">{item.label}</span>}
-            {item.badge !== undefined && item.badge > 0 && !isCollapsed && (
-              <span
-                className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                  isActive
-                    ? 'bg-white/20 text-white'
-                    : 'bg-blue-500/20 text-blue-400 border border-blue-500/30'
-                }`}
-              >
-                {item.badge}
-              </span>
-            )}
-          </button>
-        );
-      })}
-    </div>
-  );
 
   return (
     <>
-      {/* Mobile Backdrop Overlay */}
       {mobileOpen && (
         <div
           onClick={() => setMobileOpen(false)}
@@ -109,87 +60,82 @@ export default function Sidebar({
         />
       )}
 
-      {/* Sidebar Container */}
       <aside
-        className={`fixed top-0 bottom-0 left-0 z-50 flex flex-col bg-slate-900/95 border-r border-slate-800/80 backdrop-blur-md transition-all duration-300 ease-in-out ${
+        className={`fixed top-0 bottom-0 left-0 z-50 flex flex-col border-r border-white/10 bg-[rgba(15,23,42,0.72)] backdrop-blur-xl transition-all duration-300 ease-in-out ${
           isCollapsed ? 'w-20' : 'w-64'
         } ${mobileOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}
       >
-        {/* Brand Header */}
-        <div
-          className={`flex items-center justify-between h-16 border-b border-slate-800/80 ${
-            isCollapsed ? 'px-2.5 gap-1' : 'px-4'
-          }`}
-        >
-          <div className="flex items-center gap-2.5 min-w-0 shrink-0">
-            <div className="p-1.5 rounded-xl bg-gradient-to-tr from-blue-600 to-indigo-600 text-white shadow-md shadow-blue-500/20 shrink-0">
-              <Shield className="w-5 h-5" />
+        <div className={`flex h-16 items-center justify-between border-b border-white/10 ${isCollapsed ? 'px-2.5' : 'px-4'}`}>
+          <div className="flex min-w-0 items-center gap-2.5">
+            <div className="shrink-0 rounded-xl bg-gradient-to-tr from-blue-600 via-indigo-600 to-violet-600 p-1.5 text-white shadow-lg shadow-indigo-600/30">
+              <Shield className="h-5 w-5" />
             </div>
             {!isCollapsed && (
               <div className="truncate">
-                <h1 className="font-bold text-sm text-slate-100 tracking-tight flex items-center gap-1.5">
-                  DemandArm AI
-                </h1>
-                <span className="text-[10px] text-slate-400 font-medium tracking-wide uppercase block">
-                  Call QA & STT Platform
-                </span>
+                <h1 className="text-sm font-extrabold tracking-tight text-slate-50">DemandArm AI</h1>
+                <span className="block text-[10px] font-medium uppercase tracking-wide text-slate-400">Call QA console</span>
               </div>
             )}
           </div>
-
-          {/* Desktop Collapse Toggle */}
           <button
             onClick={() => setIsCollapsed(!isCollapsed)}
-            className="hidden lg:flex p-1 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-slate-800/80 transition-colors shrink-0"
-            title={isCollapsed ? 'Expand Sidebar' : 'Collapse Sidebar'}
+            className="btn-ghost hidden lg:flex"
+            title={isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
           >
-            {isCollapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
+            {isCollapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
           </button>
         </div>
 
-        {/* Navigation Items Organized in Sections */}
-        <nav className="flex-1 px-3 py-3 space-y-4 overflow-y-auto">
-          {renderNavGroup('Main', mainNavItems)}
-          {renderNavGroup('Configuration', configNavItems)}
-          {renderNavGroup('System', systemNavItems)}
+        <nav className="flex-1 space-y-1 overflow-y-auto px-3 py-3">
+          {mainNavItems.map((item) => {
+            const isActive = activeTab === item.id;
+            return (
+              <button
+                key={item.id}
+                onClick={() => {
+                  setActiveTab(item.id);
+                  setMobileOpen(false);
+                }}
+                title={`${item.label}  (${item.shortcut})`}
+                className={`relative flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-xs font-semibold ${
+                  isActive
+                    ? 'bg-gradient-to-r from-indigo-600/90 to-blue-600/80 text-white shadow-lg shadow-indigo-600/20'
+                    : 'text-slate-400 hover:bg-slate-800/50 hover:text-slate-100'
+                } ${isCollapsed ? 'justify-center px-0' : ''}`}
+              >
+                {isActive && <span className="absolute left-0 h-5 w-1 rounded-r-full bg-sky-300 shadow-[0_0_12px_rgba(125,211,252,0.8)]" />}
+                <span className={isActive ? 'text-white' : ''}>{item.icon}</span>
+                {!isCollapsed && <span className="flex-1 truncate text-left">{item.label}</span>}
+                {!isCollapsed && (
+                  <kbd className="rounded-md border border-white/10 px-1.5 py-0.5 text-[10px] text-slate-500">{item.shortcut}</kbd>
+                )}
+                {item.badge !== undefined && item.badge > 0 && !isCollapsed && (
+                  <span className="inline-flex items-center gap-1 rounded-full border border-indigo-400/30 bg-indigo-500/15 px-2 py-0.5 text-[10px] font-bold text-indigo-200">
+                    {pipelineRunning && <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)]" />}
+                    {item.badge}
+                  </span>
+                )}
+              </button>
+            );
+          })}
         </nav>
 
-        {/* User Profile Section & Theme Toggle at Bottom */}
-        <div className="p-3 border-t border-slate-800/80 space-y-2">
+        <div className="space-y-2 border-t border-white/10 p-3">
+          {!isCollapsed && (
+            <p className="px-1 text-[10px] text-slate-500">Ctrl/Cmd + K opens search. Keys 1–6 switch pages.</p>
+          )}
           {onToggleTheme && (
             <button
               onClick={onToggleTheme}
-              className={`w-full flex items-center gap-3 p-2 rounded-xl bg-slate-950/40 hover:bg-slate-800/60 border border-slate-800/60 text-xs font-medium text-slate-300 transition-colors cursor-pointer ${
-                isCollapsed ? 'justify-center' : ''
-              }`}
-              title={theme === 'light' ? 'Switch to Dark Mode' : 'Switch to Light Mode'}
+              className={`btn-secondary w-full ${isCollapsed ? 'justify-center px-0' : ''}`}
+              title={theme === 'light' ? 'Switch to dark mode' : 'Switch to light mode'}
             >
-              {theme === 'light' ? (
-                <Moon className="w-4 h-4 text-indigo-400 shrink-0" />
-              ) : (
-                <Sun className="w-4 h-4 text-amber-400 shrink-0" />
-              )}
-              {!isCollapsed && (
-                <span>{theme === 'light' ? 'Dark Theme' : 'Light Theme'}</span>
-              )}
+              <span className={`inline-flex transition-transform duration-300 ${theme === 'light' ? 'rotate-180' : ''}`}>
+                {theme === 'light' ? <Moon className="h-4 w-4 text-indigo-400" /> : <Sun className="h-4 w-4 text-amber-300" />}
+              </span>
+              {!isCollapsed && <span>{theme === 'light' ? 'Dark theme' : 'Light theme'}</span>}
             </button>
           )}
-
-          <div
-            className={`flex items-center gap-3 p-2 rounded-xl bg-slate-950/60 border border-slate-800/60 ${
-              isCollapsed ? 'justify-center p-2' : ''
-            }`}
-          >
-            <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-purple-600 to-blue-600 flex items-center justify-center text-white text-xs font-bold shrink-0">
-              NA
-            </div>
-            {!isCollapsed && (
-              <div className="flex-1 min-w-0">
-                <div className="text-xs font-bold text-slate-200 truncate">Nakshtra Lead Auditor</div>
-                <div className="text-[10px] text-slate-400 truncate">admin@demandarm.com</div>
-              </div>
-            )}
-          </div>
         </div>
       </aside>
     </>

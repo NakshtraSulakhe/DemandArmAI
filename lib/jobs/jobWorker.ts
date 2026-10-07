@@ -2,6 +2,7 @@ import { dbStore } from '../db/store';
 import { speechService } from '../stt/speechService';
 import { geminiService } from '../ai/geminiService';
 import { qaEngine } from '../qa/qaEngine';
+import { pushQaResultToCrm } from '../crm/crmWriteback';
 import { ProcessingJobItem } from '../types';
 
 export class JobWorker {
@@ -15,9 +16,8 @@ export class JobWorker {
   /**
    * Triggers processing of pending or failed jobs in configurable batch sizes.
    */
-  public async processQueue(maxBatch: number = 10): Promise<{ processedCount: number; errorsCount: number }> {
+  public async processQueue(maxBatch?: number): Promise<{ processedCount: number; errorsCount: number }> {
     if (this.isPaused()) {
-      console.log('[JobWorker] Queue processing skipped: Pipeline is PAUSED by user.');
       return { processedCount: 0, errorsCount: 0 };
     }
 
@@ -30,25 +30,65 @@ export class JobWorker {
     let errorsCount = 0;
 
     try {
-      const allJobs = dbStore.getJobs();
-      const pendingJobs = allJobs
-        .filter((j) => j.status === 'PENDING' || j.status === 'AUDIO_RETRIEVED' || j.status === 'TRANSCRIBING' || j.status === 'AI_EDITING' || j.status === 'QA_EVALUATING')
-        .slice(0, maxBatch);
+      const settings = dbStore.getSettings();
+      const concurrency = Math.min(8, Math.max(1, settings.maxConcurrency || 1));
+      const batchSize = maxBatch ?? Math.max(concurrency * 2, 6);
+      const pendingJobs = dbStore
+        .getJobs()
+        .filter((j) =>
+          j.status === 'PENDING' ||
+          j.status === 'AUDIO_RETRIEVED' ||
+          j.status === 'TRANSCRIBING' ||
+          j.status === 'AI_EDITING' ||
+          j.status === 'QA_EVALUATING'
+        )
+        .slice(0, batchSize);
 
-      for (const job of pendingJobs) {
-        try {
-          await this.processSingleJob(job.id);
-          processedCount++;
-        } catch (err: any) {
-          console.error(`Error processing job ${job.id}:`, err);
-          errorsCount++;
+      let cursor = 0;
+      const runWorker = async () => {
+        while (cursor < pendingJobs.length) {
+          if (this.isPaused()) return;
+          const job = pendingJobs[cursor];
+          cursor += 1;
+          try {
+            await this.processSingleJob(job.id);
+            processedCount += 1;
+          } catch (err: any) {
+            console.error(`Error processing job ${job.id}:`, err);
+            errorsCount += 1;
+          }
         }
+      };
+
+      const workers = Math.min(concurrency, pendingJobs.length);
+      if (workers > 0) {
+        await Promise.all(Array.from({ length: workers }, () => runWorker()));
       }
     } finally {
       this.isProcessing = false;
     }
 
     return { processedCount, errorsCount };
+  }
+
+  /** Clears stored audio pointers after the retention window. Playback still uses the CRM URL. */
+  public async releaseExpiredAudio(): Promise<number> {
+    const days = dbStore.getSettings().audioRetentionDays || 0;
+    if (days <= 0) return 0;
+    const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
+    let released = 0;
+
+    for (const job of dbStore.getJobs()) {
+      if (!job.gcsAudioUri || !job.gcsAudioUri.startsWith('gs://')) continue;
+      const updated = new Date(job.updatedAt || job.createdAt).getTime();
+      if (updated > cutoff) continue;
+      job.gcsAudioUri = undefined;
+      dbStore.saveJob(job);
+      dbStore.addAuditLog(job.id, 'AUDIO_RETENTION', `Cleared stored audio pointer after ${days} days.`);
+      released += 1;
+    }
+
+    return released;
   }
 
   /**
@@ -74,52 +114,68 @@ export class JobWorker {
 
     const client = dbStore.getClientByCode(lead.clientCode);
     const campaign = dbStore.getCampaignByCode(lead.campaignCode);
+    const settings = dbStore.getSettings();
 
-    if (!client || !campaign) {
-      const errorMsg = `Matching Client (${lead.clientCode}) or Campaign (${lead.campaignCode}) configuration missing or inactive.`;
-      job.status = 'FAILED';
+    if (!client) {
+      const errorMsg = `Client ${lead.clientCode} is not in Configuration. Add the client, then retry this lead.`;
+      job.status = 'CONFIGURATION_REQUIRED';
       job.stepError = errorMsg;
       dbStore.saveJob(job);
-      dbStore.addAuditLog(job.id, 'JOB_FAILED', errorMsg);
+      dbStore.addAuditLog(job.id, 'CONFIGURATION_REQUIRED', errorMsg);
       return job;
     }
 
+    if (!campaign && client.allowClientPromptFallback === false) {
+      const errorMsg = `Campaign ${lead.campaignCode} is missing, and client ${client.code} does not allow the client prompt alone.`;
+      job.status = 'CAMPAIGN_CONFIGURATION_REQUIRED';
+      job.stepError = errorMsg;
+      dbStore.saveJob(job);
+      dbStore.addAuditLog(job.id, 'CAMPAIGN_CONFIGURATION_REQUIRED', errorMsg);
+      return job;
+    }
+
+    const startedAt = Date.now();
     job.attempts += 1;
 
     try {
-      // Step 1: Audio Retrieval / GCS URI setup
+      if (!settings.autoGenerateTranscripts && !job.rawTranscript) {
+        job.status = 'COMPLETED';
+        job.stepError = undefined;
+        job.processingDurationMs = Date.now() - startedAt;
+        dbStore.saveJob(job);
+        dbStore.addAuditLog(job.id, 'TRANSCRIPT_SKIPPED', 'Automatic transcription is off in Settings. Turn it on and retry this lead.');
+        return job;
+      }
+
       if (job.status === 'PENDING') {
-        dbStore.addAuditLog(job.id, 'STEP_AUDIO_RETRIEVAL', `Retrieving recording URL for ${lead.leadRef}...`);
-        const settings = dbStore.getSettings();
-        job.gcsAudioUri = `gs://${settings.gcsBucketName}/audio/${lead.leadRef}.wav`;
+        dbStore.addAuditLog(job.id, 'STEP_AUDIO_RETRIEVAL', `Using the CRM recording for ${lead.leadRef}.`);
+        job.gcsAudioUri = lead.recordingUrl;
         job.status = 'AUDIO_RETRIEVED';
         dbStore.saveJob(job);
       }
 
-      // Step 2: Speech-to-Text Transcription
       if (job.status === 'AUDIO_RETRIEVED' || !job.rawTranscript) {
         job.status = 'TRANSCRIBING';
         dbStore.saveJob(job);
-        dbStore.addAuditLog(job.id, 'STEP_TRANSCRIBING', `Running Google Speech-to-Text recognition with speaker diarization...`);
+        dbStore.addAuditLog(job.id, 'STEP_TRANSCRIBING', 'Transcribing the recording.');
 
         const { gcsUri, rawTranscript } = await speechService.transcribeAudio(
           lead.recordingUrl,
           lead.leadRef,
           client.code,
-          campaign.code
+          lead.campaignCode
         );
 
         job.gcsAudioUri = gcsUri;
         job.rawTranscript = rawTranscript;
-        job.status = 'AI_EDITING'; // Progress to next state
+        job.audioDurationSeconds = rawTranscript.durationSeconds || 0;
+        job.status = 'AI_EDITING';
         dbStore.saveJob(job);
       }
 
-      // Step 3: AI Transcript Editing (Gemini)
       if (job.status === 'AI_EDITING' || !job.editedTranscript) {
-        // Point 16: Client Without Prompt Check
         if (!client.globalPrompt || client.globalPrompt.trim() === '') {
-          const errMsg = `Transcript editing prompt is not configured for client ${client.code}.`;
+          const errMsg = `Add a transcript prompt for client ${client.code} in Configuration, then retry this lead.`;
           job.status = 'CONFIGURATION_REQUIRED';
           job.stepError = errMsg;
           dbStore.saveJob(job);
@@ -127,38 +183,32 @@ export class JobWorker {
           return job;
         }
 
-        // Point 17: Campaign Without Configuration Check
-        if (!campaign && client.allowClientPromptFallback === false) {
-          const errMsg = `Campaign configuration missing for code ${lead.campaignCode} and client prompt fallback is disabled for client ${client.code}.`;
-          job.status = 'CAMPAIGN_CONFIGURATION_REQUIRED';
-          job.stepError = errMsg;
-          dbStore.saveJob(job);
-          dbStore.addAuditLog(job.id, 'CAMPAIGN_CONFIGURATION_REQUIRED', errMsg);
-          return job;
-        }
-
         dbStore.addAuditLog(
           job.id,
           'STEP_AI_EDITING',
-          `Constructing dynamic prompt (${client.code} v${client.promptVersion || 1} ${campaign ? `+ Campaign ${campaign.code}` : ''}) and dispatching to Gemini API...`
+          `Editing transcript with ${client.code} v${client.promptVersion || 1}${campaign ? ` and campaign ${campaign.code}` : ''}.`
         );
 
-        const { editedTranscript, versionTag } = await geminiService.editTranscript(
-          client,
-          campaign,
-          lead,
-          job.rawTranscript!
-        );
-
-        job.editedTranscript = editedTranscript;
-        job.promptVersionUsed = versionTag;
-        job.status = 'QA_EVALUATING'; // Progress to next state
+        const edited = await geminiService.editTranscript(client, campaign, lead, job.rawTranscript!);
+        job.editedTranscript = edited.editedTranscript;
+        job.promptVersionUsed = edited.versionTag;
+        job.promptTokens = (job.promptTokens || 0) + edited.promptTokens;
+        job.completionTokens = (job.completionTokens || 0) + edited.completionTokens;
+        job.status = 'QA_EVALUATING';
         dbStore.saveJob(job);
       }
 
-      // Step 4: Quality Assurance Evaluation
+      if (!settings.autoQaEvaluation && !job.qaResultJson) {
+        job.status = 'COMPLETED';
+        job.stepError = undefined;
+        job.processingDurationMs = Date.now() - startedAt;
+        dbStore.saveJob(job);
+        dbStore.addAuditLog(job.id, 'QA_SKIPPED', 'Automatic QA is off in Settings. Turn it on and retry to score this lead.');
+        return job;
+      }
+
       if (job.status === 'QA_EVALUATING' || !job.qaResultJson) {
-        dbStore.addAuditLog(job.id, 'STEP_QA_EVALUATING', `Evaluating call evidence against Client & Campaign qualification criteria...`);
+        dbStore.addAuditLog(job.id, 'STEP_QA_EVALUATING', 'Scoring the call against the client qualification criteria.');
 
         const qaResult = await qaEngine.evaluateLead(
           client,
@@ -170,6 +220,10 @@ export class JobWorker {
 
         job.qaResultJson = qaResult;
         job.qaStatus = qaResult.qualificationStatus;
+        job.promptTokens = (job.promptTokens || 0) + Number(qaResult.metadata?.promptTokens || 0);
+        job.completionTokens = (job.completionTokens || 0) + Number(qaResult.metadata?.completionTokens || 0);
+        job.audioDurationSeconds = job.audioDurationSeconds || job.rawTranscript?.durationSeconds || 0;
+        job.processingDurationMs = Date.now() - startedAt;
         job.status = 'COMPLETED';
         job.stepError = undefined;
         dbStore.saveJob(job);
@@ -177,15 +231,17 @@ export class JobWorker {
         dbStore.addAuditLog(
           job.id,
           'JOB_COMPLETED',
-          `Pipeline completed successfully. Qualification Result: ${qaResult.qualificationStatus} (Score: ${qaResult.overallScore}%)`
+          `Finished. Result: ${qaResult.qualificationStatus} (${qaResult.overallScore}%).`
         );
+        await pushQaResultToCrm(job, lead);
       }
     } catch (err: any) {
       const stepError = err.message || 'Pipeline execution failed during processing step.';
       job.status = 'FAILED';
       job.stepError = stepError;
+      job.processingDurationMs = Date.now() - startedAt;
       dbStore.saveJob(job);
-      dbStore.addAuditLog(job.id, 'JOB_FAILED', `Error during processing: ${stepError}`);
+      dbStore.addAuditLog(job.id, 'JOB_FAILED', stepError);
     }
 
     return job;
@@ -200,18 +256,36 @@ export class JobWorker {
       throw new Error(`Job not found: ${jobId}`);
     }
 
-    // Determine step to resume from
-    if (job.rawTranscript && !job.editedTranscript) {
-      job.status = 'AI_EDITING';
-    } else if (job.rawTranscript && job.editedTranscript && !job.qaResultJson) {
-      job.status = 'QA_EVALUATING';
-    } else {
+    if (!job.rawTranscript) {
       job.status = 'PENDING';
+    } else if (!job.editedTranscript) {
+      job.status = 'AI_EDITING';
+    } else {
+      job.status = 'QA_EVALUATING';
+      job.qaResultJson = undefined;
+      job.qaStatus = undefined;
     }
 
     job.stepError = undefined;
     dbStore.saveJob(job);
     dbStore.addAuditLog(job.id, 'JOB_RETRY', `Manual retry initiated. Resuming job lifecycle at state: ${job.status}`);
+
+    return this.processSingleJob(job.id);
+  }
+
+  /**
+   * Runs the full pipeline again from the recording, including transcription.
+   */
+  public async restartJob(jobId: string): Promise<ProcessingJobItem> {
+    const job = dbStore.getJobById(jobId);
+    if (!job) {
+      throw new Error(`Job not found: ${jobId}`);
+    }
+
+    job.status = 'PENDING';
+    job.stepError = undefined;
+    dbStore.saveJob(job);
+    dbStore.addAuditLog(job.id, 'JOB_RESTART', 'Manual restart from the recording.');
 
     return this.processSingleJob(job.id);
   }

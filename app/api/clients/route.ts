@@ -3,6 +3,8 @@ import { dbStore } from '../../../lib/db/store';
 
 export async function GET() {
   try {
+    await dbStore.ensureConfigBackupImported();
+    await dbStore.refreshDirectoryFromDb();
     const clients = dbStore.getClients();
     const campaigns = dbStore.getCampaigns();
 

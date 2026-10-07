@@ -1,7 +1,7 @@
 'use client';
 
-import React from 'react';
-import { Menu, RefreshCw, Play, Shield, Activity, Sun, Moon, PauseCircle, PlayCircle } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { Menu, RefreshCw, Play, Sun, Moon, Pause } from 'lucide-react';
 import { NavTab } from './Sidebar';
 
 interface HeaderProps {
@@ -13,37 +13,30 @@ interface HeaderProps {
   isProcessingPaused?: boolean;
   onTogglePause?: () => void;
   setMobileOpen: (open: boolean) => void;
-  isCollapsed: boolean;
+  isCollapsed?: boolean;
   theme?: 'dark' | 'light';
   onToggleTheme?: () => void;
+  lastSyncedAt?: Date | null;
 }
 
 const pageTitles: Record<NavTab, { title: string; subtitle: string }> = {
-  dashboard: {
-    title: 'Dashboard Overview',
-    subtitle: 'Real-time sales call transcription status, evidence QA scores, and activity feeds.',
-  },
-  'all-leads': {
-    title: 'CRM Sales Leads Directory',
-    subtitle: 'Browse, filter, listen to recordings, view raw STT, and inspect Gemini AI transcripts.',
-  },
-  queue: {
-    title: 'Processing Queue',
-    subtitle: 'Monitor and process active Speech-to-Text and Gemini AI editing jobs.',
-  },
-  configuration: {
-    title: 'Client & Campaign AI Configuration',
-    subtitle: 'Manage administrative global client prompts, campaign assets, and qualification rules.',
-  },
-  analytics: {
-    title: 'Platform Analytics & Cost Tracking',
-    subtitle: 'Track recording audio volume, Gemini token consumption, and API usage breakdown.',
-  },
-  settings: {
-    title: 'Global Administrative Settings',
-    subtitle: 'Configure CRM endpoints, Google Speech-to-Text models, Gemini API keys, and security parameters.',
-  },
+  dashboard: { title: 'Dashboard', subtitle: 'Calls scored, and what still needs a person.' },
+  'all-leads': { title: 'All leads', subtitle: 'Search a lead, play the recording, and review the score.' },
+  queue: { title: 'Processing queue', subtitle: 'Leads waiting for transcription, editing, or a retry.' },
+  configuration: { title: 'Clients and campaigns', subtitle: 'Prompts and the rules each campaign is scored against.' },
+  analytics: { title: 'Analytics', subtitle: 'Volume, scores, and cost from recorded pipeline usage.' },
+  settings: { title: 'Settings', subtitle: 'CRM connection, model keys, and how the queue runs.' },
 };
+
+function relativeSync(value: Date | null | undefined, now: number) {
+  if (!value) return 'Not synced this session';
+  const mins = Math.max(0, Math.round((now - value.getTime()) / 60000));
+  if (mins < 1) return 'Last synced: just now';
+  if (mins === 1) return 'Last synced: 1 min ago';
+  if (mins < 60) return `Last synced: ${mins} mins ago`;
+  const hours = Math.round(mins / 60);
+  return `Last synced: ${hours} hr ago`;
+}
 
 export default function Header({
   activeTab,
@@ -54,113 +47,75 @@ export default function Header({
   isProcessingPaused = false,
   onTogglePause,
   setMobileOpen,
-  isCollapsed,
   theme = 'dark',
   onToggleTheme,
+  lastSyncedAt,
 }: HeaderProps) {
   const current = pageTitles[activeTab];
+  const [now, setNow] = useState(Date.now());
+
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 30000);
+    return () => clearInterval(timer);
+  }, []);
 
   return (
-    <header
-      className="sticky top-0 z-30 flex items-center justify-between h-16 px-4 sm:px-6 bg-slate-900/80 border-b border-slate-800/80 backdrop-blur-md transition-all duration-300 w-full"
-    >
+    <header className="sticky top-0 z-30 flex h-16 w-full items-center justify-between border-b border-white/10 bg-[rgba(7,9,14,0.72)] px-4 backdrop-blur-md sm:px-6">
       <div className="flex items-center gap-3">
-        {/* Mobile Menu Toggle Button */}
-        <button
-          onClick={() => setMobileOpen(true)}
-          className="lg:hidden p-2 rounded-xl text-slate-400 hover:text-slate-200 hover:bg-slate-800/80 transition-colors"
-        >
-          <Menu className="w-5 h-5" />
+        <button onClick={() => setMobileOpen(true)} className="btn-ghost lg:hidden" aria-label="Open navigation">
+          <Menu className="h-5 w-5" />
         </button>
-
         <div>
-          <h2 className="text-base font-bold text-slate-100">{current.title}</h2>
-          <p className="text-xs text-slate-400 hidden sm:block">{current.subtitle}</p>
+          <h2 className="text-base font-extrabold tracking-tight text-slate-50">{current.title}</h2>
+          <p className="hidden text-xs text-slate-400 sm:block">{current.subtitle}</p>
         </div>
       </div>
 
-      {/* Header Actions */}
-      <div className="flex items-center gap-3">
-        {/* Theme Toggle Button */}
+      <div className="flex items-center gap-2">
         <button
           onClick={onToggleTheme}
-          className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700/80 transition-all flex items-center justify-center gap-1.5 text-xs font-semibold"
-          title={theme === 'light' ? 'Switch to Dark Theme' : 'Switch to Light Theme'}
+          className="btn-ghost"
+          title={theme === 'light' ? 'Switch to dark theme' : 'Switch to light theme'}
         >
-          {theme === 'light' ? (
-            <>
-              <Moon className="w-4 h-4 text-indigo-400" />
-              <span className="hidden sm:inline text-slate-300">Dark</span>
-            </>
-          ) : (
-            <>
-              <Sun className="w-4 h-4 text-amber-400" />
-              <span className="hidden sm:inline text-slate-300">Light</span>
-            </>
-          )}
+          <span className={`inline-flex transition-transform duration-300 ${theme === 'light' ? '-rotate-90' : 'rotate-0'}`}>
+            {theme === 'light' ? <Moon className="h-4 w-4 text-indigo-300" /> : <Sun className="h-4 w-4 text-amber-300" />}
+          </span>
         </button>
 
-        {/* Global Stop / Start Processing Pipeline Toggle */}
         {onTogglePause && (
           <button
             onClick={onTogglePause}
-            className={`flex items-center gap-2 px-3 py-1.5 text-xs font-semibold rounded-xl border transition-all cursor-pointer ${
+            className={`flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-semibold ${
               isProcessingPaused
-                ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 hover:bg-emerald-500/30'
-                : 'bg-rose-500/15 text-rose-300 border-rose-500/30 hover:bg-rose-500/25'
+                ? 'border-amber-400/30 bg-amber-500/12 text-amber-200'
+                : 'border-emerald-400/30 bg-emerald-500/12 text-emerald-200'
             }`}
-            title={
-              isProcessingPaused
-                ? 'Start Speech-to-Text & Gemini AI auto-transcription pipeline'
-                : 'Stop Speech-to-Text & Gemini AI auto-transcription pipeline (Save API credits)'
-            }
           >
-            {isProcessingPaused ? (
-              <>
-                <PlayCircle className="w-4 h-4 text-emerald-400" />
-                <span className="font-bold">Start Pipeline</span>
-                <span className="hidden lg:inline text-[10px] px-1.5 py-0.5 rounded bg-amber-500/30 text-amber-200">
-                  STOPPED (Credits Saved)
-                </span>
-              </>
-            ) : (
-              <>
-                <PauseCircle className="w-4 h-4 text-rose-400 animate-pulse" />
-                <span className="font-bold">Stop Pipeline</span>
-                <span className="hidden lg:inline text-[10px] px-1.5 py-0.5 rounded bg-rose-500/20 text-rose-200">
-                  Active
-                </span>
-              </>
-            )}
+            <span className={`h-2 w-2 rounded-full ${isProcessingPaused ? 'bg-amber-400' : 'animate-pulse bg-emerald-400 shadow-[0_0_10px_rgba(16,185,129,0.8)]'}`} />
+            <span className="hidden sm:inline">{isProcessingPaused ? 'Pipeline paused' : 'Pipeline running'}</span>
+            <span className="rounded-md bg-black/20 px-1.5 py-0.5 text-[10px]">
+              {isProcessingPaused ? 'Resume' : 'Pause'}
+            </span>
+            {isProcessingPaused ? <Play className="h-3.5 w-3.5" /> : <Pause className="h-3.5 w-3.5" />}
           </button>
         )}
 
-        <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-950/60 border border-slate-800 text-xs">
-          <Activity className={`w-3.5 h-3.5 ${isProcessingPaused ? 'text-amber-400' : 'text-emerald-400 animate-pulse'}`} />
-          <span className="text-slate-400 font-medium">Pipeline:</span>
-          <span className={`font-bold ${isProcessingPaused ? 'text-amber-400' : 'text-emerald-400'}`}>
-            {isProcessingPaused ? 'STOPPED' : 'ACTIVE'}
-          </span>
+        <div className="flex flex-col items-end">
+          <button onClick={onSyncCrm} disabled={isSyncing} className="btn-secondary" title="Synchronize leads from the CRM">
+            <RefreshCw className={`h-3.5 w-3.5 ${isSyncing ? 'animate-spin text-sky-300' : ''}`} />
+            <span className="hidden md:inline">{isSyncing ? 'Syncing' : 'Sync CRM'}</span>
+          </button>
+          <span className="mt-0.5 hidden text-[10px] text-slate-500 lg:block">{relativeSync(lastSyncedAt, now)}</span>
         </div>
-
-        <button
-          onClick={onSyncCrm}
-          disabled={isSyncing}
-          className="flex items-center gap-2 px-3 py-1.5 text-xs font-semibold rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700/80 transition-all disabled:opacity-50"
-          title="Synchronize matching leads from CRM REST API"
-        >
-          <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin text-blue-400' : ''}`} />
-          <span className="hidden md:inline">{isSyncing ? 'Syncing...' : 'Sync CRM Leads'}</span>
-        </button>
 
         <button
           onClick={onProcessQueue}
           disabled={isProcessing || isProcessingPaused}
-          className="flex items-center gap-2 px-3 py-1.5 text-xs font-semibold rounded-xl bg-blue-600 hover:bg-blue-500 text-white shadow-md shadow-blue-600/20 transition-all disabled:opacity-50"
-          title={isProcessingPaused ? 'Pipeline is paused. Resume pipeline to run queue.' : 'Run background job worker queue'}
+          className="btn-primary"
+          title={isProcessingPaused ? 'Resume the pipeline before running the queue.' : 'Run the queue now'}
         >
-          <Play className={`w-3.5 h-3.5 ${isProcessing ? 'animate-spin' : 'fill-white'}`} />
-          <span>{isProcessing ? 'Processing...' : 'Run Pipeline'}</span>
+          <Play className={`h-3.5 w-3.5 ${isProcessing ? 'animate-spin' : 'fill-white'}`} />
+          <span>{isProcessing ? 'Starting' : 'Run queue'}</span>
         </button>
       </div>
     </header>

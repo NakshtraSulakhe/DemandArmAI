@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { dbStore } from '../../../lib/db/store';
+import { dbStore, qaCategory } from '../../../lib/db/store';
 import { jobWorker } from '../../../lib/jobs/jobWorker';
 import { crmClient } from '../../../lib/crm/crmClient';
 
@@ -20,11 +20,11 @@ export async function GET(req: Request) {
     let jobs = dbStore.getJobs();
 
     if (clientCode && clientCode !== 'ALL') {
-      jobs = jobs.filter((j) => j.lead?.clientCode.toUpperCase() === clientCode.toUpperCase());
+      jobs = jobs.filter((j) => (j.lead?.clientCode || '').toUpperCase() === clientCode.toUpperCase());
     }
 
     if (campaignCode && campaignCode !== 'ALL') {
-      jobs = jobs.filter((j) => j.lead?.campaignCode.toUpperCase() === campaignCode.toUpperCase());
+      jobs = jobs.filter((j) => (j.lead?.campaignCode || '').toUpperCase() === campaignCode.toUpperCase());
     }
 
     if (status && status !== 'ALL') {
@@ -32,10 +32,8 @@ export async function GET(req: Request) {
     }
 
     if (qaStatus && qaStatus !== 'ALL') {
-      jobs = jobs.filter((j) => {
-        const effectiveQa = j.manualOverrideStatus || j.qaStatus;
-        return effectiveQa === qaStatus;
-      });
+      const wanted = qaStatus === 'Pending QA' ? 'PENDING' : qaStatus;
+      jobs = jobs.filter((j) => qaCategory(j.manualOverrideStatus || j.qaStatus || j.lead?.qaStatusCrm) === wanted);
     }
 
     if (search) {
@@ -55,8 +53,8 @@ export async function GET(req: Request) {
       completedJobs: allJobs.filter((j) => j.status === 'COMPLETED').length,
       pendingJobs: allJobs.filter((j) => j.status === 'PENDING' || j.status === 'AUDIO_RETRIEVED' || j.status === 'TRANSCRIBING' || j.status === 'AI_EDITING' || j.status === 'QA_EVALUATING').length,
       failedJobs: allJobs.filter((j) => j.status === 'FAILED').length,
-      qualifiedLeads: allJobs.filter((j) => (j.manualOverrideStatus || j.qaStatus) === 'QUALIFIED').length,
-      needsReviewLeads: allJobs.filter((j) => (j.manualOverrideStatus || j.qaStatus) === 'NEEDS_REVIEW').length,
+      qualifiedLeads: allJobs.filter((j) => qaCategory(j.manualOverrideStatus || j.qaStatus || j.lead?.qaStatusCrm) === 'QUALIFIED').length,
+      needsReviewLeads: allJobs.filter((j) => qaCategory(j.manualOverrideStatus || j.qaStatus || j.lead?.qaStatusCrm) === 'NEEDS_REVIEW').length,
     };
 
     const totalFilteredJobs = jobs.length;

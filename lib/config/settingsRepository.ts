@@ -14,6 +14,7 @@ export class SettingsRepository {
       sttApiKey: raw.sttApiKey ? decryptCredential(raw.sttApiKey) : '',
       assemblyAiApiKey: raw.assemblyAiApiKey ? decryptCredential(raw.assemblyAiApiKey) : '',
       crmApiKey: raw.crmApiKey ? decryptCredential(raw.crmApiKey) : '',
+      webhookSecret: raw.webhookSecret ? decryptCredential(raw.webhookSecret) : '',
       gcpPrivateKey: raw.gcpPrivateKey ? decryptCredential(raw.gcpPrivateKey) : '',
     };
   }
@@ -68,6 +69,16 @@ export class SettingsRepository {
       updatePayload.crmApiKey = currentRaw.crmApiKey;
     } else {
       updatePayload.crmApiKey = encryptCredential(updatePayload.crmApiKey);
+    }
+
+    if (
+      updatePayload.webhookSecret === undefined ||
+      updatePayload.webhookSecret.trim() === '' ||
+      updatePayload.webhookSecret.includes('******')
+    ) {
+      updatePayload.webhookSecret = currentRaw.webhookSecret;
+    } else {
+      updatePayload.webhookSecret = encryptCredential(updatePayload.webhookSecret);
     }
 
     // 5. GCP Private Key

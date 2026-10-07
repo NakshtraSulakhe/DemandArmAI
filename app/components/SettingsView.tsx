@@ -54,6 +54,8 @@ interface SettingsData {
     configured: boolean;
     endpoint: string;
     maskedApiKey: string;
+    writebackUrl?: string;
+    webhookConfigured?: boolean;
   };
   defaultSttProvider: string;
   defaultEditingProvider: string;
@@ -76,6 +78,7 @@ export default function SettingsView({ onSettingsUpdated, onSyncCrm }: SettingsV
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
+  const [saveError, setSaveError] = useState('');
   const [showAdvancedGcp, setShowAdvancedGcp] = useState(false);
 
   // Key replacement toggles
@@ -83,6 +86,7 @@ export default function SettingsView({ onSettingsUpdated, onSyncCrm }: SettingsV
   const [replaceGoogleSttKey, setReplaceGoogleSttKey] = useState(false);
   const [replaceAssemblyAiKey, setReplaceAssemblyAiKey] = useState(false);
   const [replaceCrmKey, setReplaceCrmKey] = useState(false);
+  const [showSecrets, setShowSecrets] = useState(false);
 
   // Form input buffers
   const [newGeminiKey, setNewGeminiKey] = useState('');
@@ -101,6 +105,8 @@ export default function SettingsView({ onSettingsUpdated, onSyncCrm }: SettingsV
   const [defaultSttProvider, setDefaultSttProvider] = useState('gemini');
   const [crmEndpoint, setCrmEndpoint] = useState('');
   const [newCrmApiKey, setNewCrmApiKey] = useState('');
+  const [webhookSecret, setWebhookSecret] = useState('');
+  const [crmWritebackUrl, setCrmWritebackUrl] = useState('');
 
   const [maxConcurrency, setMaxConcurrency] = useState(3);
   const [autoSyncInterval, setAutoSyncInterval] = useState(15);
@@ -130,6 +136,7 @@ export default function SettingsView({ onSettingsUpdated, onSyncCrm }: SettingsV
 
         setDefaultSttProvider(s.defaultSttProvider || 'gemini');
         setCrmEndpoint(s.crm?.endpoint || '');
+        setCrmWritebackUrl(s.crm?.writebackUrl || '');
 
         setMaxConcurrency(s.maxConcurrency || 3);
         setAutoSyncInterval(s.autoSyncInterval || 15);
@@ -162,6 +169,7 @@ export default function SettingsView({ onSettingsUpdated, onSyncCrm }: SettingsV
     e.preventDefault();
     setIsSaving(true);
     setSaveSuccess(false);
+    setSaveError('');
 
     try {
       const payload: Record<string, any> = {
@@ -178,18 +186,23 @@ export default function SettingsView({ onSettingsUpdated, onSyncCrm }: SettingsV
         autoGenerateTranscripts,
         autoQaEvaluation,
         audioRetentionDays,
+        crmWritebackUrl,
       };
 
-      if (replaceGeminiKey && newGeminiKey.trim()) {
+      if (webhookSecret.trim()) {
+        payload.webhookSecret = webhookSecret.trim();
+      }
+
+      if (newGeminiKey.trim()) {
         payload.geminiApiKey = newGeminiKey.trim();
       }
-      if (replaceGoogleSttKey && newGoogleSttKey.trim()) {
+      if (newGoogleSttKey.trim()) {
         payload.googleSttApiKey = newGoogleSttKey.trim();
       }
-      if (replaceAssemblyAiKey && newAssemblyAiKey.trim()) {
+      if (newAssemblyAiKey.trim()) {
         payload.assemblyAiApiKey = newAssemblyAiKey.trim();
       }
-      if (replaceCrmKey && newCrmApiKey.trim()) {
+      if (newCrmApiKey.trim()) {
         payload.crmApiKey = newCrmApiKey.trim();
       }
       if (gcpPrivateKey.trim()) {
@@ -217,10 +230,10 @@ export default function SettingsView({ onSettingsUpdated, onSyncCrm }: SettingsV
         onSettingsUpdated();
         setTimeout(() => setSaveSuccess(false), 3000);
       } else {
-        alert(`Failed to update settings: ${data.error}`);
+        setSaveError(data.error || 'Settings were not saved to the database.');
       }
     } catch (e: any) {
-      alert(`Error saving settings: ${e.message}`);
+      setSaveError(e.message || 'Settings were not saved to the database.');
     } finally {
       setIsSaving(false);
     }
@@ -231,16 +244,12 @@ export default function SettingsView({ onSettingsUpdated, onSyncCrm }: SettingsV
     setTestResult(null);
 
     try {
-      const payload: Record<string, any> = { target, geminiModel, gcpProjectId, gcsBucketName, crmEndpoint };
-      if (target === 'gemini' && replaceGeminiKey && newGeminiKey.trim()) {
-        payload.geminiApiKey = newGeminiKey.trim();
-      }
-      if (target === 'googleStt' && replaceGoogleSttKey && newGoogleSttKey.trim()) {
-        payload.sttApiKey = newGoogleSttKey.trim();
-      }
-      if (target === 'assemblyAi' && replaceAssemblyAiKey && newAssemblyAiKey.trim()) {
-        payload.assemblyAiApiKey = newAssemblyAiKey.trim();
-      }
+      const payload: Record<string, any> = { target, geminiModel, gcpProjectId, gcsBucketName, gcpClientEmail, crmEndpoint };
+      if (newGeminiKey.trim()) payload.geminiApiKey = newGeminiKey.trim();
+      if (newGoogleSttKey.trim()) payload.sttApiKey = newGoogleSttKey.trim();
+      if (gcpPrivateKey.trim()) payload.gcpPrivateKey = gcpPrivateKey.trim();
+      if (newAssemblyAiKey.trim()) payload.assemblyAiApiKey = newAssemblyAiKey.trim();
+      if (newCrmApiKey.trim()) payload.crmApiKey = newCrmApiKey.trim();
 
       const res = await fetch('/api/settings/test-connection', {
         method: 'POST',
@@ -248,7 +257,11 @@ export default function SettingsView({ onSettingsUpdated, onSyncCrm }: SettingsV
         body: JSON.stringify(payload),
       });
       const data = await res.json();
-      setTestResult(data);
+      setTestResult({
+        target: data.target || target,
+        success: !!data.success,
+        message: data.message || data.error || 'Connection test finished with no details.',
+      });
       // Refresh status metadata
       fetchSettings();
     } catch (err: any) {
@@ -294,7 +307,7 @@ export default function SettingsView({ onSettingsUpdated, onSyncCrm }: SettingsV
           )}
           <div className="flex-1">
             <span className="font-bold uppercase tracking-wider block mb-0.5">
-              Provider Test Result ({testResult.target.toUpperCase()})
+              Provider Test Result ({(testResult.target || 'connection').toUpperCase()})
             </span>
             <span>{testResult.message}</span>
           </div>
@@ -399,6 +412,10 @@ export default function SettingsView({ onSettingsUpdated, onSyncCrm }: SettingsV
                 <Sparkles className="w-4 h-4 text-purple-400" />
                 Gemini API Credentials (STT & Editing)
               </h3>
+              <div className="flex items-center gap-1">
+              <button type="button" onClick={() => setShowSecrets((current) => !current)} className="btn-ghost text-[11px] font-semibold">
+                {showSecrets ? 'Hide keys' : 'Show keys'}
+              </button>
 
               <button
                 type="button"
@@ -408,6 +425,7 @@ export default function SettingsView({ onSettingsUpdated, onSyncCrm }: SettingsV
               >
                 {testingTarget === 'gemini' ? 'Testing...' : 'Test Gemini'}
               </button>
+              </div>
             </div>
 
             <div className="space-y-3.5 text-xs">
@@ -430,7 +448,7 @@ export default function SettingsView({ onSettingsUpdated, onSyncCrm }: SettingsV
                 ) : (
                   <div>
                     <input
-                      type="password"
+                      type={showSecrets ? 'text' : 'password'}
                       placeholder="Enter new Gemini API Key..."
                       value={newGeminiKey}
                       onChange={(e) => setNewGeminiKey(e.target.value)}
@@ -550,7 +568,7 @@ export default function SettingsView({ onSettingsUpdated, onSyncCrm }: SettingsV
                 ) : (
                   <div>
                     <input
-                      type="password"
+                      type={showSecrets ? 'text' : 'password'}
                       placeholder="Enter Google STT API Key..."
                       value={newGoogleSttKey}
                       onChange={(e) => setNewGoogleSttKey(e.target.value)}
@@ -613,7 +631,7 @@ export default function SettingsView({ onSettingsUpdated, onSyncCrm }: SettingsV
                 ) : (
                   <div>
                     <input
-                      type="password"
+                      type={showSecrets ? 'text' : 'password'}
                       placeholder="Enter AssemblyAI API Key..."
                       value={newAssemblyAiKey}
                       onChange={(e) => setNewAssemblyAiKey(e.target.value)}
@@ -685,7 +703,7 @@ export default function SettingsView({ onSettingsUpdated, onSyncCrm }: SettingsV
                 ) : (
                   <div>
                     <input
-                      type="password"
+                      type={showSecrets ? 'text' : 'password'}
                       placeholder="Enter CRM Secret Token..."
                       value={newCrmApiKey}
                       onChange={(e) => setNewCrmApiKey(e.target.value)}
@@ -708,6 +726,7 @@ export default function SettingsView({ onSettingsUpdated, onSyncCrm }: SettingsV
               </div>
 
               <div>
+                <p className="text-[11px] text-slate-500">Fast sync uses this interval. A full reconcile still runs every 6 hours.</p>
                 <label className="block text-slate-400 font-semibold mb-1">Auto Sync Interval (Minutes)</label>
                 <input
                   type="number"
@@ -721,6 +740,29 @@ export default function SettingsView({ onSettingsUpdated, onSyncCrm }: SettingsV
                   className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-slate-200 focus:outline-none focus:border-blue-500"
                 />
               </div>
+
+              <div>
+                <label className="block text-slate-400 font-semibold mb-1">Webhook secret</label>
+                <input
+                  type={showSecrets ? 'text' : 'password'}
+                  placeholder={settingsData?.crm?.webhookConfigured ? 'Configured. Enter a new secret to replace it.' : 'Required before CRM can post leads'}
+                  value={webhookSecret}
+                  onChange={(e) => setWebhookSecret(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-slate-200 font-mono focus:outline-none focus:border-blue-500"
+                />
+                <p className="text-[11px] text-slate-500 mt-1">Send this value in the x-webhook-secret header. Requests without it are rejected.</p>
+              </div>
+
+              <div>
+                <label className="block text-slate-400 font-semibold mb-1">CRM write-back URL</label>
+                <input
+                  type="text"
+                  placeholder="Optional. POST the QA decision here when a lead is scored."
+                  value={crmWritebackUrl}
+                  onChange={(e) => setCrmWritebackUrl(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-slate-200 font-mono focus:outline-none focus:border-blue-500"
+                />
+              </div>
             </div>
           </div>
 
@@ -732,8 +774,26 @@ export default function SettingsView({ onSettingsUpdated, onSyncCrm }: SettingsV
             </h3>
 
             <div className="space-y-3.5 text-xs">
+              <div>
+                <label className="block text-slate-400 font-semibold mb-1">Jobs processed at once ({isNaN(maxConcurrency) ? 3 : maxConcurrency})</label>
+                <input
+                  type="range"
+                  min={1}
+                  max={8}
+                  value={isNaN(maxConcurrency) ? 3 : maxConcurrency}
+                  onChange={(e) => {
+                    const v = parseInt(e.target.value, 10);
+                    setMaxConcurrency(isNaN(v) ? 1 : Math.min(8, Math.max(1, v)));
+                  }}
+                  className="w-full accent-amber-400"
+                />
+                <p className="text-[11px] text-slate-500 mt-1">The queue runs this many leads in parallel. The pipeline also picks up waiting jobs about every 20 seconds.</p>
+              </div>
               <div className="flex items-center justify-between">
-                <label className="text-slate-300 font-medium">Automatic Speech-to-Text Generation</label>
+                <div>
+                  <label className="text-slate-300 font-medium">Automatic transcription</label>
+                  <p className="text-[11px] text-slate-500">Off skips speech-to-text and editing until you turn it back on and retry.</p>
+                </div>
                 <input
                   type="checkbox"
                   checked={autoGenerateTranscripts}
@@ -742,8 +802,11 @@ export default function SettingsView({ onSettingsUpdated, onSyncCrm }: SettingsV
                 />
               </div>
 
-              <div className="flex items-center justify-between">
-                <label className="text-slate-300 font-medium">Automatic QA Evaluation</label>
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <label className="text-slate-300 font-medium">Automatic QA</label>
+                  <p className="text-[11px] text-slate-500">Off keeps the edited transcript and waits for you to retry scoring.</p>
+                </div>
                 <input
                   type="checkbox"
                   checked={autoQaEvaluation}
@@ -753,7 +816,8 @@ export default function SettingsView({ onSettingsUpdated, onSyncCrm }: SettingsV
               </div>
 
               <div>
-                <label className="block text-slate-400 font-semibold mb-1">Audio Retention Period (Days)</label>
+                <label className="block text-slate-400 font-semibold mb-1">Audio retention (days)</label>
+                <p className="text-[11px] text-slate-500 mb-1">Clears stored cloud audio pointers after this many days. The CRM recording link stays available for playback.</p>
                 <input
                   type="number"
                   value={isNaN(audioRetentionDays) ? 90 : audioRetentionDays}
@@ -777,9 +841,12 @@ export default function SettingsView({ onSettingsUpdated, onSyncCrm }: SettingsV
 
           <div className="flex items-center gap-3">
             {saveSuccess && (
-              <span className="text-xs font-semibold text-emerald-400 animate-pulse">
-                API Credentials saved & encrypted!
+              <span className="text-xs font-semibold text-emerald-400">
+                Saved to the database.
               </span>
+            )}
+            {saveError && (
+              <span className="text-xs font-semibold text-rose-300 max-w-md">{saveError}</span>
             )}
             <button
               type="submit"

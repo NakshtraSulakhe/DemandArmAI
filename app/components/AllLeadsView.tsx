@@ -7,8 +7,6 @@ import {
   AlertTriangle,
   XCircle,
   Clock,
-  RotateCcw,
-  Eye,
   FileCheck2,
   Users,
   ChevronLeft,
@@ -18,6 +16,7 @@ import {
 import { ClientConfig, CampaignConfig, ProcessingJobItem } from '../../lib/types';
 import StatusBadge from './ui/StatusBadge';
 import EmptyState from './ui/EmptyState';
+import RowActions from './ui/RowActions';
 
 interface AllLeadsViewProps {
   stats: {
@@ -52,6 +51,8 @@ interface AllLeadsViewProps {
   onLimitChange: (limit: number) => void;
   onSelectJob: (job: ProcessingJobItem) => void;
   onRetryJob: (jobId: string) => void;
+  onJobFinished: (job: ProcessingJobItem) => void;
+  onActionError: (message: string) => void;
   isProcessingPaused?: boolean;
   onTogglePause?: () => void;
 }
@@ -74,6 +75,8 @@ export default function AllLeadsView({
   onLimitChange,
   onSelectJob,
   onRetryJob,
+  onJobFinished,
+  onActionError,
   isProcessingPaused = false,
   onTogglePause,
 }: AllLeadsViewProps) {
@@ -92,7 +95,7 @@ export default function AllLeadsView({
             CRM Sales Leads Directory
           </h2>
           <p className="text-xs text-slate-400 mt-1">
-            Browse, filter, listen to recordings, view raw STT, and inspect Gemini AI transcripts.
+            Stored CRM leads. Each lead is listed once, even when several jobs exist for it.
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -130,7 +133,7 @@ export default function AllLeadsView({
             <Users className="w-4 h-4 text-blue-400" />
           </div>
           <div className="text-2xl font-black text-slate-100 mt-2">{stats.totalLeads}</div>
-          <p className="text-[10px] text-slate-500 mt-1">Synchronized Live</p>
+          <p className="text-[10px] text-slate-500 mt-1">Stored leads</p>
         </div>
 
         <div className="glass-panel p-4 rounded-xl relative overflow-hidden">
@@ -191,8 +194,13 @@ export default function AllLeadsView({
                 placeholder="Search leads (ID, email, company, contact)..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full bg-slate-950/60 border border-slate-800/60 rounded-xl pl-9 pr-4 py-2 text-xs text-slate-200 placeholder:text-slate-500 focus:outline-none focus:border-blue-500/80 transition-all"
+                className="w-full bg-slate-950/60 border border-slate-800/60 rounded-xl pl-9 pr-8 py-2 text-xs text-slate-200 placeholder:text-slate-500 focus:outline-none focus:border-indigo-400 transition-all"
               />
+              {searchQuery && (
+                <button type="button" onClick={() => setSearchQuery('')} className="absolute right-2 top-2 text-slate-400 hover:text-slate-100" aria-label="Clear search">
+                  ×
+                </button>
+              )}
             </div>
 
             <select
@@ -241,7 +249,16 @@ export default function AllLeadsView({
 
         {/* All Leads CRM Table */}
         <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs border-collapse">
+          <table className="w-full table-fixed border-collapse text-left text-xs">
+            <colgroup>
+              <col className="w-14" />
+              <col className="w-28" />
+              <col />
+              <col />
+              <col />
+              <col className="w-[7.5rem]" />
+              <col className="w-[17.5rem]" />
+            </colgroup>
             <thead className="bg-slate-900/60 text-slate-400 font-bold uppercase tracking-wider border-b border-slate-800/40">
               <tr>
                 <th className="py-3.5 px-4 w-16 text-center">SR NO.</th>
@@ -250,7 +267,7 @@ export default function AllLeadsView({
                 <th className="py-3.5 px-4">COMPANY</th>
                 <th className="py-3.5 px-4">CAMPAIGN/AGENT</th>
                 <th className="py-3.5 px-4">QUALITY</th>
-                <th className="py-3.5 px-4 text-center">ACTIONS</th>
+                <th className="py-3 px-3 text-right">ACTIONS</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/20 bg-slate-950/20 text-slate-300">
@@ -266,77 +283,68 @@ export default function AllLeadsView({
                   const formattedTime = createdDateObj.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
 
                   return (
-                    <tr key={job.id} className="hover:bg-blue-500/5 transition-all">
+                    <tr key={job.id} className="hover:bg-indigo-500/10 transition-all">
                       {/* SR NO. */}
-                      <td className="py-4 px-4 text-center font-bold text-slate-400 font-mono">{srNo}</td>
+                      <td className="px-3 py-2 text-center align-middle font-bold font-mono text-slate-400">{srNo}</td>
 
                       {/* CREATED DATE */}
-                      <td className="py-4 px-4 whitespace-nowrap">
-                        <div className="font-bold text-slate-200">{formattedDate}</div>
-                        <div className="text-[10px] text-slate-400 font-mono mt-0.5">{formattedTime}</div>
+                      <td className="whitespace-nowrap px-3 py-2 align-middle">
+                        <div className="font-semibold text-slate-200">{formattedDate}</div>
+                        <div className="font-mono text-[10px] text-slate-400">{formattedTime}</div>
                       </td>
 
                       {/* LEAD INFO */}
-                      <td className="py-4 px-4">
-                        <div className="font-bold text-slate-100 text-sm">
+                      <td className="px-3 py-2 align-middle">
+                        <div className="truncate text-sm font-semibold text-slate-100">
                           {lead?.contactName || 'Lead Name'}
                         </div>
-                        <div className="text-[11px] text-slate-400 mt-0.5">
-                          Primary email • <span className="text-slate-300">{lead?.email || 'N/A'}</span>
+                        <div className="truncate text-[11px] text-slate-400" title={lead?.email || ''}>
+                          {lead?.email || 'No email'}
                         </div>
-                        <div className="text-[11px] text-slate-400">
-                          Contact number • <span className="text-slate-300">{lead?.phone || lead?.leadRef || 'N/A'}</span>
+                        <div className="truncate text-[11px] text-slate-500">
+                          {lead?.phone || lead?.leadRef || 'No phone'}
                         </div>
                       </td>
 
                       {/* COMPANY */}
-                      <td className="py-4 px-4">
-                        <div className="font-bold text-slate-100 text-sm">
+                      <td className="px-3 py-2 align-middle">
+                        <div className="truncate text-sm font-semibold text-slate-100" title={lead?.companyName || ''}>
                           {lead?.companyName || 'Company'}
                         </div>
-                        <div className="text-[11px] text-slate-400 mt-0.5">
-                          Country • <span className="text-slate-300">{lead?.country || 'United States'}</span>
-                        </div>
-                        <div className="text-[11px] text-slate-400">
-                          Job title • <span className="text-slate-300">{lead?.jobTitle || 'Executive'}</span>
+                        <div className="truncate text-[11px] text-slate-400">
+                          {[lead?.jobTitle, lead?.country].filter(Boolean).join(' · ') || 'Details unavailable'}
                         </div>
                       </td>
 
                       {/* CAMPAIGN / AGENT */}
-                      <td className="py-4 px-4">
-                        <div className="font-bold text-slate-200">
-                          {lead?.campaignName || `Campaign ${lead?.campaignCode}`} - {lead?.clientCode}
+                      <td className="px-3 py-2 align-middle">
+                        <div className="truncate font-semibold text-slate-200" title={`${lead?.campaignName || lead?.campaignCode || ''} · ${lead?.clientCode || ''}`}>
+                          {lead?.campaignName || `Campaign ${lead?.campaignCode}`}
+                          {lead?.clientCode ? ` · ${lead.clientCode}` : ''}
                         </div>
-                        <div className="text-[11px] text-slate-400 mt-0.5">
-                          Assigned agent • <span className="text-slate-300">{lead?.agentName || 'Faizan Shabbir shaikh'}</span>
+                        <div className="truncate text-[11px] text-slate-400">
+                          {lead?.agentName || 'Unassigned'}
                         </div>
+                        {job.stepError && (
+                          <div className="mt-0.5 max-w-[220px] truncate text-[11px] text-amber-300" title={job.stepError}>{job.stepError}</div>
+                        )}
                       </td>
 
                       {/* QUALITY BADGE */}
-                      <td className="py-4 px-4 whitespace-nowrap">
-                        <StatusBadge status={effectiveQa} />
+                      <td className="whitespace-nowrap px-3 py-2 align-middle">
+                        <StatusBadge status={effectiveQa} size="sm" />
                       </td>
 
                       {/* ACTIONS */}
-                      <td className="py-4 px-4 text-center">
-                        <div className="flex items-center justify-center gap-2">
-                          <button
-                            onClick={() => onSelectJob(job)}
-                            className="px-3 py-1.5 rounded-xl bg-blue-600/15 text-blue-400 hover:bg-blue-600 hover:text-white border border-blue-500/30 text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer shadow-xs"
-                            title="View Full Lead Details & AI Transcript"
-                          >
-                            <Eye className="w-3.5 h-3.5" />
-                            <span>Details</span>
-                          </button>
-
-                          <button
-                            onClick={() => onRetryJob(job.id)}
-                            className="p-1.5 rounded-xl bg-slate-800/60 text-slate-400 hover:text-amber-400 hover:bg-slate-700/80 border border-slate-700/60 transition-all cursor-pointer"
-                            title="Retry Pipeline Processing"
-                          >
-                            <RotateCcw className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
+                      <td className="whitespace-nowrap px-3 py-2 text-right align-middle">
+                        <RowActions
+                          job={job}
+                          reviewLabel="Details"
+                          onSelect={onSelectJob}
+                          onRetry={onRetryJob}
+                          onFinished={onJobFinished}
+                          onError={onActionError}
+                        />
                       </td>
                     </tr>
                   );

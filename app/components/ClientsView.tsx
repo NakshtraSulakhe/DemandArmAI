@@ -206,6 +206,46 @@ export default function ClientsView({ clients, onRefresh, onSyncCrm }: ClientsVi
     }
   };
 
+  const handleDeleteClient = async (client: ClientConfig) => {
+    const campaignCount = client.campaigns?.length || 0;
+    const campaignNote = campaignCount
+      ? ` Its ${campaignCount} campaign${campaignCount === 1 ? '' : 's'} will be removed too.`
+      : '';
+    if (!confirm(`Delete client ${client.name} (${client.code})?${campaignNote} Leads already in the queue stay.`)) return;
+    try {
+      const res = await fetch(`/api/clients?code=${encodeURIComponent(client.code)}`, { method: 'DELETE' });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        alert(data.error || 'Could not delete this client.');
+        return;
+      }
+      if (selectedClient?.code === client.code) setSelectedClient(null);
+      onRefresh();
+    } catch (e: any) {
+      alert(`Could not delete this client: ${e.message}`);
+    }
+  };
+
+  const handleDeleteCampaign = async (campaignCode: string, campaignName: string) => {
+    if (!confirm(`Delete campaign ${campaignName} (${campaignCode})? Leads already in the queue stay.`)) return;
+    try {
+      const res = await fetch(`/api/campaigns?code=${encodeURIComponent(campaignCode)}`, { method: 'DELETE' });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        alert(data.error || 'Could not delete this campaign.');
+        return;
+      }
+      setSelectedClient((current) =>
+        current
+          ? { ...current, campaigns: (current.campaigns || []).filter((cmp) => cmp.code !== campaignCode) }
+          : current
+      );
+      onRefresh();
+    } catch (e: any) {
+      alert(`Could not delete this campaign: ${e.message}`);
+    }
+  };
+
   const handleToggleActive = async (client: ClientConfig) => {
     try {
       const res = await fetch('/api/clients', {
@@ -335,6 +375,14 @@ export default function ClientsView({ clients, onRefresh, onSyncCrm }: ClientsVi
                   </button>
 
                   <button
+                    onClick={() => handleDeleteClient(client)}
+                    className="p-1.5 rounded-lg bg-rose-500/10 text-rose-400 hover:bg-rose-500/20 border border-rose-500/30 transition-colors"
+                    title={`Delete client ${client.name}`}
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+
+                  <button
                     onClick={() => handleToggleActive(client)}
                     className={`p-1.5 rounded-lg border transition-colors ${
                       client.isActive
@@ -411,8 +459,11 @@ export default function ClientsView({ clients, onRefresh, onSyncCrm }: ClientsVi
                   placeholder="Define the AI transcript editing rules for this client..."
                   value={globalPrompt}
                   onChange={(e) => setGlobalPrompt(e.target.value)}
-                  className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-xl text-xs text-slate-200 leading-relaxed focus:outline-none focus:border-blue-500"
+                  className="prompt-editor w-full px-3 py-2 border border-slate-800 rounded-xl text-xs text-slate-200 focus:outline-none focus:border-indigo-400"
                 />
+                <p className="mt-1 text-[11px] text-slate-500">
+                  {globalPrompt.length} characters · ~{Math.max(1, Math.ceil(globalPrompt.length / 4))} tokens
+                </p>
               </div>
 
               <div>
@@ -536,12 +587,23 @@ export default function ClientsView({ clients, onRefresh, onSyncCrm }: ClientsVi
                 </div>
               </div>
 
-              <button
-                onClick={() => setSelectedClient(null)}
-                className="text-slate-400 hover:text-slate-200 text-base font-bold"
-              >
-                ✕
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => handleDeleteClient(selectedClient)}
+                  className="action-btn action-retry"
+                  title={`Delete client ${selectedClient.name}`}
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                  Delete client
+                </button>
+                <button
+                  onClick={() => setSelectedClient(null)}
+                  className="text-slate-400 hover:text-slate-200 text-base font-bold"
+                >
+                  ✕
+                </button>
+              </div>
             </div>
 
             {/* Drawer Tabs */}
@@ -655,8 +717,11 @@ export default function ClientsView({ clients, onRefresh, onSyncCrm }: ClientsVi
                     rows={12}
                     value={promptInput}
                     onChange={(e) => setPromptInput(e.target.value)}
-                    className="w-full p-4 bg-slate-950 border border-slate-800 rounded-xl text-xs text-slate-200 font-mono leading-relaxed focus:outline-none focus:border-blue-500"
+                    className="prompt-editor w-full p-4 border border-slate-800 rounded-xl text-xs text-slate-200 focus:outline-none focus:border-indigo-400"
                   />
+                  <p className="mt-2 text-[11px] text-slate-500">
+                    {promptInput.length} characters · ~{Math.max(1, Math.ceil(promptInput.length / 4))} tokens
+                  </p>
                 </div>
               )}
 
@@ -718,7 +783,7 @@ export default function ClientsView({ clients, onRefresh, onSyncCrm }: ClientsVi
 
                   <div className="space-y-3">
                     {selectedClient.campaigns?.map((cmp) => (
-                      <div key={cmp.id} className="p-4 rounded-xl bg-slate-950 border border-slate-800 flex items-start justify-between">
+                      <div key={cmp.id} className="p-4 rounded-xl bg-slate-950 border border-slate-800 flex items-start justify-between gap-3">
                         <div>
                           <div className="font-bold text-slate-200 text-sm">
                             {cmp.name} ({cmp.code})
@@ -728,9 +793,15 @@ export default function ClientsView({ clients, onRefresh, onSyncCrm }: ClientsVi
                             &ldquo;{cmp.additionalEditingInstructions || 'No custom campaign instructions'}&rdquo;
                           </div>
                         </div>
-                        <span className="px-2.5 py-1 rounded bg-blue-500/10 text-blue-400 border border-blue-500/30 text-[10px] font-bold">
-                          Configured
-                        </span>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteCampaign(cmp.code, cmp.name)}
+                          className="action-btn action-retry shrink-0"
+                          title={`Delete campaign ${cmp.name}`}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                          Delete
+                        </button>
                       </div>
                     )) || <div className="text-slate-500 italic">No child campaigns registered under client {selectedClient.code}.</div>}
                   </div>

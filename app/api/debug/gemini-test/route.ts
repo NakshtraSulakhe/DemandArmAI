@@ -10,15 +10,12 @@ export async function POST() {
 }
 
 async function handleGeminiTest() {
+  if (process.env.ENABLE_DEBUG_ROUTES !== 'true') {
+    return NextResponse.json({ success: false, error: 'Not found' }, { status: 404 });
+  }
+
   try {
     const { apiKey, model } = await credentialService.getGeminiCredentials();
-
-    console.log('=== GEMINI DEBUG TEST ROUTE ===');
-    console.log('Model:', model);
-    console.log('Key exists:', !!apiKey);
-    console.log('Key length:', apiKey?.length);
-    console.log('Key prefix:', apiKey?.slice(0, 6));
-    console.log('Key suffix:', apiKey?.slice(-4));
 
     const response = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,

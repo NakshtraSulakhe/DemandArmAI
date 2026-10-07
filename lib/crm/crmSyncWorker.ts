@@ -1,4 +1,5 @@
 import { dbStore } from '../db/store';
+import { decryptCredential } from '../security/encryption';
 import { crmClient } from './crmClient';
 import { jobWorker } from '../jobs/jobWorker';
 import {
@@ -19,8 +20,7 @@ export class CrmSyncWorkerService {
   private reconciliationSyncTimer: NodeJS.Timeout | null = null;
 
   // Configurable sync parameters
-  private normalIntervalMs = 2 * 60 * 1000; // 2 Minutes
-  private currentIntervalMs = 2 * 60 * 1000;
+  private currentIntervalMs = 15 * 60 * 1000;
   private consecutiveFailures = 0;
 
   private lastFastSyncAt?: string;
@@ -28,7 +28,7 @@ export class CrmSyncWorkerService {
 
   private metricsState: CrmSyncMetricsState = {
     globalStatus: 'IDLE',
-    currentSyncIntervalMinutes: 2,
+    currentSyncIntervalMinutes: 15,
     consecutiveFailures: 0,
     activeClientCodes: [],
     clientMetrics: {},
@@ -44,14 +44,16 @@ export class CrmSyncWorkerService {
   }
 
   /**
-   * Initializes the 2-minute Fast Sync background timer and periodic 6-hour Reconciliation timer.
+   * Starts fast sync on the interval from Settings, plus a 6-hour full reconcile.
    */
   public ensureAutoSyncStarted(): void {
     if (this.fastSyncTimer) {
       return; // Already initialized
     }
 
-    console.log('[CRM Sync Worker] Initializing Near-Real-Time CRM Synchronization (2-minute Fast Sync interval)...');
+    const minutes = Math.min(120, Math.max(1, dbStore.getSettings().autoSyncInterval || 15));
+    this.currentIntervalMs = minutes * 60 * 1000;
+    console.log(`[CRM Sync Worker] Fast sync every ${minutes} minutes.`);
     
     // Initial sync run on server start after 5 seconds delay
     setTimeout(() => {
@@ -69,10 +71,25 @@ export class CrmSyncWorkerService {
     }, 6 * 60 * 60 * 1000);
   }
 
+  public rescheduleFromSettings(): void {
+    if (!this.fastSyncTimer) return;
+    this.scheduleNextFastSync();
+  }
+
+  private delayForNextSync(): number {
+    if (this.consecutiveFailures >= 3) return 10 * 60 * 1000;
+    if (this.consecutiveFailures === 2) return 5 * 60 * 1000;
+    if (this.consecutiveFailures === 1) return 2 * 60 * 1000;
+    const minutes = Math.min(120, Math.max(1, dbStore.getSettings().autoSyncInterval || 15));
+    return minutes * 60 * 1000;
+  }
+
   private scheduleNextFastSync(): void {
     if (this.fastSyncTimer) {
       clearTimeout(this.fastSyncTimer);
     }
+    this.currentIntervalMs = this.delayForNextSync();
+    this.metricsState.currentSyncIntervalMinutes = Math.round(this.currentIntervalMs / 60000);
     this.fastSyncTimer = setTimeout(() => {
       this.runFastSync()
         .then(() => this.scheduleNextFastSync())
@@ -88,7 +105,9 @@ export class CrmSyncWorkerService {
    */
   public async runFastSync(): Promise<CrmSyncMetricsState> {
     this.lastFastSyncAt = new Date().toISOString();
-    return this.executeSyncPass('FAST', '');
+    const lookbackMinutes = Math.max(dbStore.getSettings().autoSyncInterval || 15, 60);
+    const from = new Date(Date.now() - lookbackMinutes * 60 * 1000);
+    return this.executeSyncPass('FAST', from.toISOString().slice(0, 10));
   }
 
   /**
@@ -166,7 +185,7 @@ export class CrmSyncWorkerService {
           // Fetch paginated leads from CRM API
           const { leads, pagesProcessed } = await this.fetchClientLeadsPaginated(
             crmEndpoint,
-            settings.crmApiKey,
+            decryptCredential(settings.crmApiKey),
             clientCode,
             dateFromStr
           );
@@ -184,8 +203,8 @@ export class CrmSyncWorkerService {
               const newClientData = {
                 name: `Client ${parsedLead.clientCode}`,
                 code: parsedLead.clientCode,
-                globalPrompt: `You are an expert sales call transcript editor for Client ${parsedLead.clientCode}.\nFormat the edited transcript cleanly with clear speaker labels ([Sales Rep] / [Prospect Name]).\nRemove filler words like "um", "uh" while strictly preserving implementation timelines, user seat counts, pricing numbers, product features, and client commitments.`,
-                qualificationCriteria: `1. Verification of prospect name, company, and decision-maker role.\n2. Discussion of software integration or implementation requirements.\n3. Target implementation timeline identified.\n4. Follow-up action or demo agreed upon.`,
+                globalPrompt: '',
+                qualificationCriteria: '',
                 isActive: true,
               };
               matchingClient = dbStore.saveClient(newClientData);
@@ -277,11 +296,10 @@ export class CrmSyncWorkerService {
         }
       }
 
-      // Success Reset: Reset adaptive backoff interval to normal 2 minutes
       this.consecutiveFailures = 0;
-      this.currentIntervalMs = this.normalIntervalMs;
+      this.currentIntervalMs = this.delayForNextSync();
       this.metricsState.consecutiveFailures = 0;
-      this.metricsState.currentSyncIntervalMinutes = 2;
+      this.metricsState.currentSyncIntervalMinutes = Math.round(this.currentIntervalMs / 60000);
       this.metricsState.globalStatus = 'IDLE';
 
       dbStore.addAuditLog(

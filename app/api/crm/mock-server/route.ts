@@ -1,6 +1,10 @@
 import { NextResponse } from 'next/server';
 
 export async function GET(req: Request) {
+  if (process.env.ENABLE_DEBUG_ROUTES !== 'true') {
+    return NextResponse.json({ success: false, error: 'Not found' }, { status: 404 });
+  }
+
   try {
     const { searchParams } = new URL(req.url);
     const authHeader = req.headers.get('authorization');

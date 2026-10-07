@@ -4,12 +4,10 @@ import React, { useState } from 'react';
 import {
   Clock,
   Play,
-  RotateCw,
   AlertTriangle,
   CheckCircle2,
   ListFilter,
   Search,
-  Eye,
   Activity,
   Layers,
   Sparkles,
@@ -22,6 +20,7 @@ import {
 import { ClientConfig, CampaignConfig, ProcessingJobItem } from '../../lib/types';
 import StatusBadge from './ui/StatusBadge';
 import EmptyState from './ui/EmptyState';
+import RowActions from './ui/RowActions';
 
 interface QueueViewProps {
   queueStats: {
@@ -51,6 +50,8 @@ interface QueueViewProps {
   onPageChange: (page: number) => void;
   onSelectJob: (job: ProcessingJobItem) => void;
   onRetryJob: (jobId: string) => void;
+  onJobFinished: (job: ProcessingJobItem) => void;
+  onActionError: (message: string) => void;
   onProcessQueue: () => void;
   isProcessing: boolean;
   isProcessingPaused?: boolean;
@@ -74,29 +75,18 @@ export default function QueueView({
   onPageChange,
   onSelectJob,
   onRetryJob,
+  onJobFinished,
+  onActionError,
   onProcessQueue,
   isProcessing,
   isProcessingPaused = false,
   onTogglePause,
 }: QueueViewProps) {
-  const [processingJobId, setProcessingJobId] = useState<string | null>(null);
-
-  const handleProcessSingle = async (jobId: string) => {
-    setProcessingJobId(jobId);
-    try {
-      const res = await fetch(`/api/jobs/${jobId}/process`, { method: 'POST' });
-      const data = await res.json();
-      if (!data.success) {
-        alert(`Error processing lead: ${data.error}`);
-      }
-      onProcessQueue();
-    } catch (e: any) {
-      console.error(e);
-      alert(`Error processing lead: ${e.message}`);
-    } finally {
-      setProcessingJobId(null);
-    }
-  };
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const availableCampaigns =
+    selectedClientCode !== 'ALL'
+      ? campaigns.filter((cmp) => cmp.clientCode.toUpperCase() === selectedClientCode.toUpperCase())
+      : campaigns;
 
   return (
     <div className="space-y-6">
@@ -160,38 +150,6 @@ export default function QueueView({
         </div>
       )}
 
-      {/* QA Status Counts & Delivery Status Pill Bar */}
-      <div className="bg-slate-900/60 p-4 rounded-2xl border border-slate-800/40 space-y-3 shadow-lg">
-        <div className="flex flex-wrap items-center gap-2 text-xs">
-          <span className="font-bold text-slate-400 uppercase tracking-wider text-[11px]">QA STATUS COUNTS:</span>
-          <span className="px-2.5 py-1 rounded-full text-[11px] font-bold bg-amber-500/10 text-amber-400 border border-amber-500/30">
-            Pending QA: {queueStats.waitingCount + queueStats.processingCount}
-          </span>
-          <span className="px-2.5 py-1 rounded-full text-[11px] font-semibold bg-blue-500/10 text-blue-400 border border-blue-500/30">
-            In Progress: {queueStats.processingCount}
-          </span>
-          <span className="px-2.5 py-1 rounded-full text-[11px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
-            Qualified: {queueStats.completedTodayCount}
-          </span>
-          <span className="px-2.5 py-1 rounded-full text-[11px] font-semibold bg-rose-500/10 text-rose-400 border border-rose-500/30">
-            Disqualified: {queueStats.failedCount}
-          </span>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-2 text-xs pt-2 border-t border-slate-800/40">
-          <span className="font-bold text-slate-400 uppercase tracking-wider text-[11px]">CLIENT DELIVERY:</span>
-          <span className="px-2.5 py-1 rounded-full text-[11px] font-semibold bg-amber-500/10 text-amber-400 border border-amber-500/30">
-            Pending: {queueStats.activeCount}
-          </span>
-          <span className="px-2.5 py-1 rounded-full text-[11px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
-            Delivered: {queueStats.completedTodayCount}
-          </span>
-          <span className="px-2.5 py-1 rounded-full text-[11px] font-semibold bg-rose-500/10 text-rose-400 border border-rose-500/30">
-            Rejected: {queueStats.failedCount}
-          </span>
-        </div>
-      </div>
-
       {/* Main Queue Table Card Container */}
       <div className="bg-slate-900/60 rounded-2xl border border-slate-800/40 overflow-hidden shadow-xl">
         {/* Queue Navigation Tabs & Search */}
@@ -253,8 +211,13 @@ export default function QueueView({
                 placeholder="Search lead ref, company..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pl-8 pr-3 py-1.5 bg-slate-950/60 border border-slate-800/60 rounded-xl text-xs text-slate-200 placeholder:text-slate-500 focus:outline-none focus:border-blue-500"
+                className="w-full pl-8 pr-8 py-1.5 bg-slate-950/60 border border-slate-800/60 rounded-xl text-xs text-slate-200 placeholder:text-slate-500 focus:outline-none focus:border-indigo-400"
               />
+              {searchQuery && (
+                <button type="button" onClick={() => setSearchQuery('')} className="absolute right-2 top-1.5 text-slate-400 hover:text-slate-100" aria-label="Clear search">
+                  ×
+                </button>
+              )}
             </div>
 
             <select
@@ -276,7 +239,7 @@ export default function QueueView({
               className="px-3 py-1.5 bg-slate-950/60 border border-slate-800/60 rounded-xl text-xs text-slate-300 focus:outline-none focus:border-blue-500"
             >
               <option value="ALL">All Campaigns</option>
-              {campaigns.map((cmp) => (
+              {availableCampaigns.map((cmp) => (
                 <option key={cmp.id} value={cmp.code}>
                   {cmp.code} - {cmp.name}
                 </option>
@@ -287,8 +250,46 @@ export default function QueueView({
 
         {/* Queue Table */}
         <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs border-collapse">
-            <thead className="bg-slate-950/80 text-slate-400 font-bold uppercase tracking-wider border-b border-slate-800/40">
+          <table className="w-full table-fixed border-collapse text-left text-xs">
+            <colgroup>
+              <col className="w-14" />
+              <col className="w-28" />
+              <col />
+              <col />
+              <col />
+              <col className="w-[7.5rem]" />
+              <col className="w-[17.5rem]" />
+            </colgroup>
+            {selectedIds.length > 0 && (
+              <caption className="px-4 py-2 text-left">
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] text-slate-300">{selectedIds.length} selected</span>
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    onClick={() => selectedIds.forEach((id) => onRetryJob(id))}
+                  >
+                    Batch retry
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    onClick={() => {
+                      const chosen = jobs.filter((job) => selectedIds.includes(job.id));
+                      const lines = ['lead,company,status', ...chosen.map((job) => `"${job.lead?.contactName || ''}","${job.lead?.companyName || ''}","${job.qaStatus || job.status}"`)];
+                      const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
+                      const link = document.createElement('a');
+                      link.href = URL.createObjectURL(blob);
+                      link.download = 'queue-export.csv';
+                      link.click();
+                    }}
+                  >
+                    Export CSV
+                  </button>
+                </div>
+              </caption>
+            )}
+            <thead className="sticky top-0 z-10 bg-slate-950/95 text-slate-400 font-bold uppercase tracking-wider border-b border-slate-800/40">
               <tr>
                 <th className="py-3.5 px-4 w-16 text-center">SR NO.</th>
                 <th className="py-3.5 px-4">CREATED DATE</th>
@@ -296,7 +297,7 @@ export default function QueueView({
                 <th className="py-3.5 px-4">COMPANY</th>
                 <th className="py-3.5 px-4">CAMPAIGN/AGENT</th>
                 <th className="py-3.5 px-4">QUALITY</th>
-                <th className="py-3.5 px-4 text-center">ACTIONS</th>
+                <th className="py-3 px-3 text-right">ACTIONS</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/20 bg-slate-950/20 text-slate-300">
@@ -325,92 +326,84 @@ export default function QueueView({
                   const formattedDate = createdDateObj.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
                   const formattedTime = createdDateObj.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
 
-                  const isJobProcessing = processingJobId === job.id;
-
                   return (
-                    <tr key={job.id} className="hover:bg-blue-500/5 transition-all">
+                    <tr key={job.id} className="hover:bg-indigo-500/10 transition-all">
                       {/* SR NO. */}
-                      <td className="py-4 px-4 text-center font-bold text-slate-400 font-mono">{srNo}</td>
+                      <td className="px-3 py-2 text-center font-bold text-slate-400 font-mono align-middle">
+                        <label className="inline-flex items-center gap-2">
+                          <input
+                            type="checkbox"
+                            checked={selectedIds.includes(job.id)}
+                            onChange={() =>
+                              setSelectedIds((current) =>
+                                current.includes(job.id) ? current.filter((id) => id !== job.id) : [...current, job.id]
+                              )
+                            }
+                            aria-label={`Select ${lead?.companyName || srNo}`}
+                          />
+                          {srNo}
+                        </label>
+                      </td>
 
                       {/* CREATED DATE */}
-                      <td className="py-4 px-4 whitespace-nowrap">
-                        <div className="font-bold text-slate-200">{formattedDate}</div>
-                        <div className="text-[10px] text-slate-400 font-mono mt-0.5">{formattedTime}</div>
+                      <td className="whitespace-nowrap px-3 py-2 align-middle">
+                        <div className="font-semibold text-slate-200">{formattedDate}</div>
+                        <div className="font-mono text-[10px] text-slate-400">{formattedTime}</div>
                       </td>
 
                       {/* LEAD INFO */}
-                      <td className="py-4 px-4">
-                        <div className="font-bold text-slate-100 text-sm">
+                      <td className="px-3 py-2 align-middle">
+                        <div className="truncate text-sm font-semibold text-slate-100">
                           {lead?.contactName || 'Lead Name'}
                         </div>
-                        <div className="text-[11px] text-slate-400 mt-0.5">
-                          Primary email • <span className="text-slate-300">{lead?.email || 'N/A'}</span>
+                        <div className="truncate text-[11px] text-slate-400" title={lead?.email || ''}>
+                          {lead?.email || 'No email'}
                         </div>
-                        <div className="text-[11px] text-slate-400">
-                          Contact number • <span className="text-slate-300">{lead?.phone || lead?.leadRef || 'N/A'}</span>
+                        <div className="truncate text-[11px] text-slate-500">
+                          {lead?.phone || lead?.leadRef || 'No phone'}
                         </div>
                       </td>
 
                       {/* COMPANY */}
-                      <td className="py-4 px-4">
-                        <div className="font-bold text-slate-100 text-sm">
+                      <td className="px-3 py-2 align-middle">
+                        <div className="truncate text-sm font-semibold text-slate-100" title={lead?.companyName || ''}>
                           {lead?.companyName || 'Company'}
                         </div>
-                        <div className="text-[11px] text-slate-400 mt-0.5">
-                          Job title • <span className="text-slate-300">{lead?.jobTitle || 'Executive'}</span>
+                        <div className="truncate text-[11px] text-slate-400" title={lead?.jobTitle || ''}>
+                          {lead?.jobTitle || 'Job title unavailable'}
                         </div>
                       </td>
 
                       {/* CAMPAIGN / AGENT */}
-                      <td className="py-4 px-4">
-                        <div className="font-bold text-slate-200">
-                          {lead?.campaignName || `Campaign ${lead?.campaignCode}`} - {lead?.clientCode}
+                      <td className="px-3 py-2 align-middle">
+                        <div className="truncate font-semibold text-slate-200" title={`${lead?.campaignName || lead?.campaignCode || ''} · ${lead?.clientCode || ''}`}>
+                          {lead?.campaignName || `Campaign ${lead?.campaignCode}`}
+                          {lead?.clientCode ? ` · ${lead.clientCode}` : ''}
                         </div>
-                        <div className="text-[11px] text-slate-400 mt-0.5">
-                          Assigned agent • <span className="text-slate-300">{lead?.agentName || 'Faizan Shabbir shaikh'}</span>
+                        <div className="truncate text-[11px] text-slate-400">
+                          {lead?.agentName || 'Unassigned'}
                         </div>
+                        {job.stepError && (
+                          <div className="mt-0.5 max-w-[220px] truncate text-[11px] text-amber-300" title={job.stepError}>{job.stepError}</div>
+                        )}
                       </td>
 
                       {/* QUALITY BADGE */}
-                      <td className="py-4 px-4 whitespace-nowrap">
-                        <StatusBadge status={effectiveQa} />
+                      <td className="whitespace-nowrap px-3 py-2 align-middle">
+                        <StatusBadge status={effectiveQa} size="sm" />
                       </td>
 
                       {/* ACTIONS */}
-                      <td className="py-4 px-4 text-center">
-                        <div className="flex items-center justify-center gap-2">
-                          <button
-                            onClick={() => onSelectJob(job)}
-                            className="px-3 py-1.5 rounded-xl bg-blue-600/15 text-blue-400 hover:bg-blue-600 hover:text-white border border-blue-500/30 text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer shadow-xs"
-                            title="Review Transcript & Lead QA Details"
-                          >
-                            <Eye className="w-3.5 h-3.5" />
-                            <span>Review Transcript</span>
-                          </button>
-
-                          {(job.status === 'PENDING' || (job.status as any) === 'QUEUED') && (
-                            <button
-                              onClick={() => handleProcessSingle(job.id)}
-                              disabled={isJobProcessing}
-                              className="px-3 py-1.5 rounded-xl bg-blue-600 text-white hover:bg-blue-500 text-xs font-bold transition-colors flex items-center gap-1 cursor-pointer disabled:opacity-50 shadow-xs"
-                              title="Prioritize & Process Now"
-                            >
-                              <Play className="w-3 h-3 fill-white" />
-                              Process
-                            </button>
-                          )}
-
-                          {job.status === 'FAILED' && (
-                            <button
-                              onClick={() => onRetryJob(job.id)}
-                              className="px-3 py-1.5 rounded-xl bg-amber-500/20 text-amber-400 hover:bg-amber-500 hover:text-white border border-amber-500/30 text-xs font-bold transition-colors flex items-center gap-1 cursor-pointer"
-                              title="Retry Processing"
-                            >
-                              <RotateCw className="w-3 h-3" />
-                              Retry
-                            </button>
-                          )}
-                        </div>
+                      <td className="whitespace-nowrap px-3 py-2 text-right align-middle">
+                        <RowActions
+                          job={job}
+                          reviewLabel="Preview"
+                          showCompletedActions={selectedTab === 'completed'}
+                          onSelect={onSelectJob}
+                          onRetry={onRetryJob}
+                          onFinished={onJobFinished}
+                          onError={onActionError}
+                        />
                       </td>
                     </tr>
                   );

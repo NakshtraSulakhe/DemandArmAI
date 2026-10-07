@@ -31,8 +31,10 @@ async function purgeDatabase() {
         clientPrompts: [],
         settings: {
           id: 'global',
-          crmEndpoint: 'https://app.tarajglobal.com/demandflowbridge/api/get_leads.php',
-          crmApiKey: 'crm_sec_demandarm_live_2026',
+          crmEndpoint: '',
+          crmApiKey: '',
+          webhookSecret: '',
+          crmWritebackUrl: '',
           sttProvider: 'gemini',
           sttApiKey: '',
           gcsBucketName: 'qtranscript-recordings',

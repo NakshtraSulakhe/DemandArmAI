@@ -1,13 +1,13 @@
 import { NextResponse } from 'next/server';
-import { dbStore } from '../../../lib/db/store';
-import { crmClient } from '../../../lib/crm/crmClient';
+import { dbStore, qaCategory } from '../../../lib/db/store';
+import { CrmLeadItem, ProcessingJobItem } from '../../../lib/types';
 
 export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
     const clientCode = searchParams.get('clientCode');
     const campaignCode = searchParams.get('campaignCode');
-    const crmQaStatus = searchParams.get('crmQaStatus');
+    const crmQaStatus = searchParams.get('qaStatus') || searchParams.get('crmQaStatus');
     const processingStatus = searchParams.get('processingStatus');
     const transcriptStatus = searchParams.get('transcriptStatus');
     const search = searchParams.get('search');
@@ -19,10 +19,15 @@ export async function GET(req: Request) {
 
     const allLeads = dbStore.getLeads();
     const allJobs = dbStore.getJobs();
-    const jobsMap = new Map<string, any>();
-    allJobs.forEach((j) => jobsMap.set(j.leadRef, j));
+    const jobsMap = new Map<string, ProcessingJobItem>();
+    allJobs.forEach((job) => {
+      const current = jobsMap.get(job.leadRef);
+      if (!current || new Date(job.updatedAt || 0).getTime() >= new Date(current.updatedAt || 0).getTime()) {
+        jobsMap.set(job.leadRef, job);
+      }
+    });
 
-    // Map leads with full processing and transcript states
+    // One directory row per stored lead. Extra jobs for the same lead stay off this list.
     let mappedLeads = allLeads.map((lead) => {
       const job = jobsMap.get(lead.leadRef);
 
@@ -74,15 +79,16 @@ export async function GET(req: Request) {
 
     // Filtering
     if (clientCode && clientCode !== 'ALL') {
-      mappedLeads = mappedLeads.filter((l) => l.clientCode.toUpperCase() === clientCode.toUpperCase());
+      mappedLeads = mappedLeads.filter((l) => (l.clientCode || '').toUpperCase() === clientCode.toUpperCase());
     }
 
     if (campaignCode && campaignCode !== 'ALL') {
-      mappedLeads = mappedLeads.filter((l) => l.campaignCode.toUpperCase() === campaignCode.toUpperCase());
+      mappedLeads = mappedLeads.filter((l) => (l.campaignCode || '').toUpperCase() === campaignCode.toUpperCase());
     }
 
     if (crmQaStatus && crmQaStatus !== 'ALL') {
-      mappedLeads = mappedLeads.filter((l) => (l.qaStatusCrm || 'Pending').toLowerCase() === crmQaStatus.toLowerCase());
+      const wanted = crmQaStatus === 'Pending QA' ? 'PENDING' : crmQaStatus;
+      mappedLeads = mappedLeads.filter((l) => qaCategory(l.job?.manualOverrideStatus || l.job?.qaStatus || l.qaStatusCrm) === wanted);
     }
 
     if (processingStatus && processingStatus !== 'ALL') {
@@ -99,7 +105,9 @@ export async function GET(req: Request) {
         (l) =>
           l.leadRef.toLowerCase().includes(s) ||
           l.companyName?.toLowerCase().includes(s) ||
-          l.contactName?.toLowerCase().includes(s)
+          l.contactName?.toLowerCase().includes(s) ||
+          l.email?.toLowerCase().includes(s) ||
+          l.phone?.toLowerCase().includes(s)
       );
     }
 
@@ -114,15 +122,35 @@ export async function GET(req: Request) {
       ? mappedLeads.slice((validPage - 1) * limit, validPage * limit)
       : mappedLeads;
 
+    const leadCategory = (lead: CrmLeadItem) =>
+      qaCategory(jobsMap.get(lead.leadRef)?.manualOverrideStatus || jobsMap.get(lead.leadRef)?.qaStatus || lead.qaStatusCrm);
+    const pendingStatuses = new Set(['PENDING', 'QUEUED', 'AUDIO_RETRIEVED', 'TRANSCRIBING', 'AI_EDITING', 'QA_EVALUATING']);
     const stats = {
-      totalCrmLeads: allLeads.length,
-      pendingQaLeads: allLeads.filter((l) => (l.qaStatusCrm || '').toLowerCase().includes('pending')).length,
-      queueWaiting: allJobs.filter((j) => j.status === 'PENDING' || (j.status as any) === 'QUEUED').length,
-      currentlyProcessing: allJobs.filter((j) => ['AUDIO_RETRIEVED', 'TRANSCRIBING', 'AI_EDITING', 'QA_EVALUATING'].includes(j.status)).length,
-      completedTranscripts: allJobs.filter((j) => j.status === 'COMPLETED').length,
-      failedJobs: allJobs.filter((j) => j.status === 'FAILED').length,
-      qaReady: allJobs.filter((j) => (j.manualOverrideStatus || j.qaStatus) === 'QUALIFIED' || j.editedTranscript).length,
+      totalLeads: allLeads.length,
+      totalJobs: jobsMap.size,
+      completedJobs: Array.from(jobsMap.values()).filter((j) => j.status === 'COMPLETED').length,
+      pendingJobs: Array.from(jobsMap.values()).filter((j) => pendingStatuses.has(j.status)).length,
+      failedJobs: Array.from(jobsMap.values()).filter((j) => j.status === 'FAILED').length,
+      qualifiedLeads: allLeads.filter((lead) => leadCategory(lead) === 'QUALIFIED').length,
+      needsReviewLeads: allLeads.filter((lead) => leadCategory(lead) === 'NEEDS_REVIEW').length,
     };
+
+    const directoryJobs = paginatedLeads.map((lead) => {
+      const { job, rawLeadData, processingStatus, transcriptStatus, preEditScore, postEditScore, aiQaStatus, ...storedLead } = lead;
+      if (job) {
+        return { ...job, lead: storedLead };
+      }
+      return {
+        id: `stored_${lead.id}`,
+        leadId: lead.id,
+        leadRef: lead.leadRef,
+        status: 'STORED',
+        attempts: 0,
+        createdAt: lead.createdAt,
+        updatedAt: lead.updatedAt || lead.syncedAt,
+        lead: storedLead,
+      };
+    });
 
     return NextResponse.json({
       success: true,
@@ -131,8 +159,10 @@ export async function GET(req: Request) {
         page: validPage,
         limit: limit > 0 ? limit : totalLeads,
         totalLeads,
+        totalJobs: totalLeads,
         totalPages,
       },
+      jobs: directoryJobs,
       leads: paginatedLeads,
     });
   } catch (err: any) {

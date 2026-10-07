@@ -99,7 +99,7 @@ export default function DashboardView({
 
   useEffect(() => {
     fetchAnalytics();
-  }, [daysFilter, selectedClientCode, selectedCampaignCode]);
+  }, [daysFilter, selectedClientCode, selectedCampaignCode, stats.totalJobs, stats.qualifiedLeads, stats.needsReviewLeads, stats.pendingJobs]);
 
   const availableCampaigns =
     selectedClientCode !== 'ALL'
@@ -108,6 +108,24 @@ export default function DashboardView({
 
   return (
     <div className="space-y-6 pb-12">
+      <div className="glass-panel rounded-2xl p-4">
+        <div className="mb-2 flex items-center justify-between">
+          <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400">Quality velocity</h3>
+          <span className="text-[11px] text-slate-500">{stats.totalJobs} jobs</span>
+        </div>
+        <div className="flex h-3 overflow-hidden rounded-full bg-slate-950/70">
+          <div className="bg-emerald-500" style={{ width: `${stats.totalJobs ? (stats.qualifiedLeads / stats.totalJobs) * 100 : 0}%` }} />
+          <div className="bg-amber-400" style={{ width: `${stats.totalJobs ? (stats.needsReviewLeads / stats.totalJobs) * 100 : 0}%` }} />
+          <div className="bg-rose-500" style={{ width: `${stats.totalJobs ? (stats.failedJobs / stats.totalJobs) * 100 : 0}%` }} />
+          <div className="bg-indigo-500" style={{ width: `${stats.totalJobs ? (stats.pendingJobs / stats.totalJobs) * 100 : 0}%` }} />
+        </div>
+        <div className="mt-2 flex flex-wrap gap-3 text-[11px] text-slate-400">
+          <span>Qualified {stats.qualifiedLeads}</span>
+          <span>Needs review {stats.needsReviewLeads}</span>
+          <span>Failed {stats.failedJobs}</span>
+          <span>In queue {stats.pendingJobs}</span>
+        </div>
+      </div>
       {/* Top Header & Analytics Controls Bar */}
       <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4 bg-slate-900/80 p-5 rounded-2xl border border-slate-800/80 backdrop-blur-md shadow-lg">
         <div>
@@ -317,7 +335,7 @@ export default function DashboardView({
             {analytics?.totalSttUsageMinutes ?? 0} <span className="text-xs font-normal text-slate-400">min</span>
           </div>
           <p className="text-[10px] text-slate-500">
-            Avg {analytics?.durationDistribution?.avgDurationSeconds ?? 45}s call length
+            Avg {analytics?.durationDistribution?.avgDurationSeconds ?? 0}s call length
           </p>
         </div>
 
@@ -328,10 +346,10 @@ export default function DashboardView({
             <Zap className="w-4 h-4 text-blue-400" />
           </div>
           <div className="text-2xl font-black text-blue-400">
-            {analytics?.successPercentage ?? 100}%
+            {analytics?.successPercentage ?? 0}%
           </div>
           <p className="text-[10px] text-slate-500">
-            Speed ~{analytics?.avgProcessingDurationSeconds ?? 3.5}s / call
+            Speed ~{analytics?.avgProcessingDurationSeconds ?? 0}s / call
           </p>
         </div>
       </div>
@@ -547,7 +565,7 @@ export default function DashboardView({
               </div>
               <div className="flex justify-between">
                 <span>Avg Call Duration:</span>
-                <span className="text-slate-200">{analytics?.durationDistribution?.avgDurationSeconds || 45} seconds</span>
+                <span className="text-slate-200">{analytics?.durationDistribution?.avgDurationSeconds ?? 0} seconds</span>
               </div>
               <div className="flex justify-between">
                 <span>Est. Monthly Proj:</span>
@@ -657,10 +675,10 @@ export default function DashboardView({
             <div className="space-y-1.5 text-xs">
               <div className="flex justify-between text-slate-300 font-medium">
                 <span className="flex items-center gap-1.5">
-                  <span className="w-2.5 h-2.5 rounded-full bg-blue-400" /> Pending QA / In Queue
+                  <span className="w-2.5 h-2.5 rounded-full bg-blue-400" /> Pending QA
                 </span>
                 <span className="font-mono text-blue-400 font-bold">
-                  {analytics?.qualityDistribution?.pending ?? stats.pendingJobs} ({analytics?.qualityDistribution?.pendingPercent ?? 0}%)
+                  {analytics?.qualityDistribution?.pending ?? 0} ({analytics?.qualityDistribution?.pendingPercent ?? 0}%)
                 </span>
               </div>
               <div className="w-full h-2 rounded-full bg-slate-800 overflow-hidden">

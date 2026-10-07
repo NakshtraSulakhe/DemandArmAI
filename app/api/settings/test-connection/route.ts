@@ -75,6 +75,12 @@ export async function POST(req: Request) {
       if (body.sttApiKey && !body.sttApiKey.includes('******')) {
         googleCreds.apiKey = body.sttApiKey;
       }
+      if (body.gcpPrivateKey && !body.gcpPrivateKey.includes('******') && body.gcpPrivateKey !== '***CONFIGURED***') {
+        googleCreds.privateKey = body.gcpPrivateKey;
+      }
+      if (body.gcpClientEmail) {
+        googleCreds.clientEmail = body.gcpClientEmail;
+      }
 
       if (!googleCreds.apiKey && !googleCreds.privateKey) {
         credentialService.recordTestStatus('googleStt', false);
@@ -192,8 +198,14 @@ export async function POST(req: Request) {
       }
     }
 
-    return NextResponse.json({ success: false, message: 'Invalid test target specified.' }, { status: 400 });
+    return NextResponse.json(
+      { success: false, target: body?.target || 'connection', message: 'Invalid test target specified.' },
+      { status: 400 }
+    );
   } catch (err: any) {
-    return NextResponse.json({ success: false, error: err.message }, { status: 500 });
+    return NextResponse.json(
+      { success: false, target: 'connection', message: err.message || 'Connection test failed.' },
+      { status: 500 }
+    );
   }
 }

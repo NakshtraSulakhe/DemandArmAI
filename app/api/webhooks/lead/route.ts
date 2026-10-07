@@ -2,21 +2,23 @@ import { NextResponse } from 'next/server';
 import { crmClient } from '@/lib/crm/crmClient';
 import { jobWorker } from '@/lib/jobs/jobWorker';
 import { dbStore } from '@/lib/db/store';
+import { settingsRepository } from '@/lib/config/settingsRepository';
 
-const DEFAULT_SECRET = 'whsec_demandflow_live_sync_2026';
+function expectedWebhookSecret(): string {
+  return process.env.WEBHOOK_SECRET || settingsRepository.getSettings().webhookSecret || '';
+}
 
 export async function POST(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
     const querySecret = searchParams.get('secret');
     const headerSecret = req.headers.get('x-webhook-secret') || req.headers.get('x-api-key');
-
     const providedSecret = querySecret || headerSecret;
+    const expectedSecret = expectedWebhookSecret();
 
-    // Optional secret key validation
-    if (providedSecret && providedSecret !== DEFAULT_SECRET) {
+    if (!expectedSecret || providedSecret !== expectedSecret) {
       return NextResponse.json(
-        { status: 'error', message: 'Unauthorized: Invalid webhook secret key.' },
+        { status: 'error', message: 'Unauthorized. Set a webhook secret in Settings and send it with the request.' },
         { status: 401 }
       );
     }
@@ -88,7 +90,7 @@ export async function GET() {
     status: 'online',
     service: 'DemandArm Webhook Receiver',
     endpoint: '/api/webhooks/lead',
-    secret_param: '?secret=whsec_demandflow_live_sync_2026',
+    auth: 'Send the webhook secret in the x-webhook-secret header.',
     supported_methods: ['POST'],
   });
 }

@@ -116,13 +116,12 @@ export class SpeechService {
   ): Promise<{ gcsUri: string; rawTranscript: RawTranscriptData }> {
     const provider = await credentialService.getDefaultSttProvider();
     const googleCreds = await credentialService.getGoogleSttCredentials();
-    const bucketName = googleCreds.gcsBucket || 'qtranscript-recordings';
-    const gcsUri = `gs://${bucketName}/audio/${leadRef}.wav`;
+    const sourceUri = recordingUrl || '';
 
     if (provider === 'gemini' || !googleCreds.hasPrivateKey) {
       try {
         const rawTranscript = await this.transcribeAudioViaGemini(recordingUrl, leadRef);
-        return { gcsUri, rawTranscript };
+        return { gcsUri: sourceUri, rawTranscript };
       } catch (geminiErr: any) {
         console.error(`Gemini Multimodal STT Error for lead ${leadRef}:`, geminiErr);
         throw new Error(`Gemini Multimodal STT Error: ${geminiErr.message}`);
@@ -132,7 +131,7 @@ export class SpeechService {
     if (provider === 'assemblyai') {
       try {
         const rawTranscript = await this.transcribeAudioViaAssemblyAi(recordingUrl, leadRef);
-        return { gcsUri, rawTranscript };
+        return { gcsUri: sourceUri, rawTranscript };
       } catch (assErr: any) {
         console.error(`AssemblyAI STT Error for lead ${leadRef}:`, assErr);
         throw new Error(`AssemblyAI STT Error: ${assErr.message}`);
@@ -140,8 +139,12 @@ export class SpeechService {
     }
 
     try {
+      const gcsUri = recordingUrl.startsWith('gs://')
+        ? recordingUrl
+        : `gs://${googleCreds.gcsBucket || 'qtranscript-recordings'}/audio/${leadRef}.wav`;
       const rawTranscript = await this.callGoogleCloudSpeechToText(recordingUrl, gcsUri, googleCreds);
-      return { gcsUri, rawTranscript };
+      const storedUri = recordingUrl.startsWith('gs://') ? recordingUrl : sourceUri;
+      return { gcsUri: storedUri, rawTranscript };
     } catch (err: any) {
       console.error(`Google Cloud Speech-to-Text API Error for lead ${leadRef}:`, err);
       throw new Error(`Google Cloud Speech-to-Text API Error: ${err.message}`);
@@ -184,9 +187,9 @@ export class SpeechService {
       utterances: utterances.length > 0 ? utterances : [
         { speakerTag: 1, speakerName: 'Speaker', startTime: '0.0s', endTime: '0.0s', transcript: fullText }
       ],
-      confidence: 0.99,
+      confidence: 0,
       languageCode: 'en-US',
-      durationSeconds: Math.max(lines.length * 4, 30),
+      durationSeconds: lines.length * 4,
     };
   }
 
@@ -367,9 +370,11 @@ export class SpeechService {
       utterances: utterances.length > 0 ? utterances : [
         { speakerTag: 1, speakerName: 'Speaker', startTime: '0.0s', endTime: '0.0s', transcript: fullText }
       ],
-      confidence: response.results?.[0]?.alternatives?.[0]?.confidence || 0.95,
+      confidence: response.results?.[0]?.alternatives?.[0]?.confidence || 0,
       languageCode: 'en-US',
-      durationSeconds: 45,
+      durationSeconds: utterances.length
+        ? Math.round(parseFloat(utterances[utterances.length - 1].endTime) || 0)
+        : 0,
     };
   }
 }

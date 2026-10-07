@@ -30,19 +30,11 @@ export class GeminiService {
     campaign: CampaignConfig | undefined,
     lead: CrmLeadItem,
     rawTranscript: RawTranscriptData
-  ): Promise<{ editedTranscript: string; versionTag: string }> {
+  ): Promise<{ editedTranscript: string; versionTag: string; promptTokens: number; completionTokens: number }> {
     const { finalPrompt, versionTag } = this.constructPrompt(client, campaign, lead, rawTranscript);
     const { apiKey, model: configuredModel } = await credentialService.getGeminiCredentials();
 
-    const candidateModels = Array.from(
-      new Set([
-        configuredModel,
-        'gemini-3.8-flash',
-        'gemini-3.5-flash',
-        'gemini-3.8-flash',
-        'gemini-1.5-flash',
-      ].filter(Boolean))
-    );
+    const candidateModels = Array.from(new Set([configuredModel, 'gemini-1.5-flash'].filter(Boolean)));
 
     let lastError = '';
     for (const modelName of candidateModels) {
@@ -52,11 +44,14 @@ export class GeminiService {
 
         const result = await model.generateContent(finalPrompt);
         const responseText = result.response.text();
+        const usage = result.response.usageMetadata;
 
         if (responseText && responseText.trim().length > 0) {
           return {
             editedTranscript: responseText.trim(),
             versionTag,
+            promptTokens: usage?.promptTokenCount || 0,
+            completionTokens: usage?.candidatesTokenCount || 0,
           };
         }
       } catch (err: any) {
@@ -91,9 +86,7 @@ export class GeminiService {
     });
 
     const { apiKey, model: configuredModel } = await credentialService.getGeminiCredentials();
-    const candidateModels = Array.from(
-      new Set([configuredModel, 'gemini-3.8-flash', 'gemini-3.5-flash', 'gemini-3.8-flash', 'gemini-1.5-flash'].filter(Boolean))
-    );
+    const candidateModels = Array.from(new Set([configuredModel, 'gemini-1.5-flash'].filter(Boolean)));
 
     let lastError = '';
     for (const modelName of candidateModels) {

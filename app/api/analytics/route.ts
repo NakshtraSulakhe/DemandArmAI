@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { dbStore } from '../../../lib/db/store';
+import { getUsdToInrRate } from '../../../lib/fx/usdInr';
 
 export async function GET(req: Request) {
   try {
@@ -11,7 +12,8 @@ export async function GET(req: Request) {
     const days = daysParam ? parseInt(daysParam, 10) : undefined;
 
     const analytics = dbStore.getAnalytics(days, clientCode, campaignCode);
-    return NextResponse.json({ success: true, analytics });
+    const usdToInrRate = await getUsdToInrRate();
+    return NextResponse.json({ success: true, analytics: { ...analytics, usdToInrRate } });
   } catch (err: any) {
     return NextResponse.json({ success: false, error: err.message }, { status: 500 });
   }

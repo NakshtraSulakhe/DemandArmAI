@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { dbStore } from '../../../../lib/db/store';
+import { pushQaResultToCrm } from '../../../../lib/crm/crmWriteback';
 
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -59,6 +60,9 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     }
 
     dbStore.saveJob(job);
+    if (manualOverrideStatus) {
+      await pushQaResultToCrm(job, job.lead);
+    }
     const updatedJob = dbStore.getJobById(job.id);
 
     return NextResponse.json({

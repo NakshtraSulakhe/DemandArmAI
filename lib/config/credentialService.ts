@@ -151,6 +151,8 @@ export class CredentialService {
         configured: !!(settings.crmEndpoint && settings.crmEndpoint.trim()),
         endpoint: settings.crmEndpoint || '',
         maskedApiKey: maskApiKey(settings.crmApiKey),
+        writebackUrl: settings.crmWritebackUrl || '',
+        webhookConfigured: !!(settings.webhookSecret && settings.webhookSecret.trim()),
       },
       defaultSttProvider: settings.defaultSttProvider || settings.sttProvider || 'gemini',
       defaultEditingProvider: settings.defaultEditingProvider || 'gemini',
