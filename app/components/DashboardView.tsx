@@ -154,7 +154,7 @@ export default function DashboardView({
                 daysFilter === 1 ? 'bg-blue-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'
               }`}
             >
-              Today
+              Today (UTC)
             </button>
             <button
               onClick={() => setDaysFilter(7)}
@@ -248,7 +248,7 @@ export default function DashboardView({
         {/* Card 1: Daily Leads */}
         <div className="glass-panel p-4 rounded-2xl border border-slate-800/80 relative overflow-hidden space-y-2">
           <div className="flex items-center justify-between text-slate-400">
-            <span className="text-[11px] font-bold uppercase tracking-wider">Daily Leads</span>
+            <span className="text-[11px] font-bold uppercase tracking-wider">Daily Leads (UTC)</span>
             <Calendar className="w-4 h-4 text-blue-400" />
           </div>
           <div className="flex items-baseline gap-2">
@@ -268,7 +268,7 @@ export default function DashboardView({
               </span>
             )}
           </div>
-          <p className="text-[10px] text-slate-500">Vs Yesterday ({analytics?.yesterdayLeadsCount ?? 0})</p>
+          <p className="text-[10px] text-slate-500">UTC day vs yesterday ({analytics?.yesterdayLeadsCount ?? 0})</p>
         </div>
 
         {/* Card 2: Weekly Leads */}
@@ -362,7 +362,7 @@ export default function DashboardView({
             <div>
               <h3 className="text-sm font-bold text-slate-100 flex items-center gap-2">
                 <BarChart3 className="w-4 h-4 text-blue-400" />
-                Daily Lead Inflow & QA Velocity
+                Daily Lead Inflow & QA Velocity (UTC)
               </h3>
               <p className="text-[11px] text-slate-400">Daily breakdown of Qualified vs Needs Review vs Disqualified leads</p>
             </div>

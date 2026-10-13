@@ -5,7 +5,7 @@ import Sidebar, { NavTab } from './components/Sidebar';
 import Header from './components/Header';
 import DashboardView from './components/DashboardView';
 import AllLeadsView from './components/AllLeadsView';
-import QueueView from './components/QueueView';
+import QueueView, { QueueTab } from './components/QueueView';
 import ClientsView from './components/ClientsView';
 import CampaignsView from './components/CampaignsView';
 import AnalyticsView from './components/AnalyticsView';
@@ -48,7 +48,7 @@ export default function Home() {
   const [clients, setClients] = useState<ClientConfig[]>([]);
   const [campaigns, setCampaigns] = useState<CampaignConfig[]>([]);
   const [jobs, setJobs] = useState<ProcessingJobItem[]>([]);
-  const [queueTab, setQueueTab] = useState<'active' | 'failed' | 'completed'>('active');
+  const [queueTab, setQueueTab] = useState<QueueTab>('active');
 
   const [stats, setStats] = useState({
     totalLeads: 0,
@@ -64,8 +64,14 @@ export default function Home() {
     waitingCount: 0,
     processingCount: 0,
     failedCount: 0,
+    skippedCount: 0,
     completedTodayCount: 0,
     activeCount: 0,
+  });
+  const [qualitySummary, setQualitySummary] = useState<{ utcDay: string; scoredCount: number; averageQuality: number | null }>({
+    utcDay: '',
+    scoredCount: 0,
+    averageQuality: null,
   });
 
   // Pagination state
@@ -83,6 +89,12 @@ export default function Home() {
   const [selectedCampaignCode, setSelectedCampaignCode] = useState('ALL');
   const [statusFilter, setStatusFilter] = useState('ALL');
   const [qaFilter, setQaFilter] = useState('ALL');
+  const [agentFilter, setAgentFilter] = useState('ALL');
+  const [dateFilter, setDateFilter] = useState('ALL');
+  const [queueDateFilter, setQueueDateFilter] = useState('today');
+  const [recordingFilter, setRecordingFilter] = useState('ALL');
+  const [stageFilter, setStageFilter] = useState('ALL');
+  const [agentOptions, setAgentOptions] = useState<string[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
 
   // Selected detail modal
@@ -155,13 +167,18 @@ export default function Home() {
   }, []);
 
   // Fetch Queue data
-  const fetchQueueData = useCallback(async (tabOverride?: 'active' | 'failed' | 'completed') => {
+  const fetchQueueData = useCallback(async (tabOverride?: QueueTab) => {
     try {
       const targetTab = tabOverride || queueTab;
       const url = new URL('/api/queue', window.location.href);
       url.searchParams.set('tab', targetTab);
       if (selectedClientCode !== 'ALL') url.searchParams.set('clientCode', selectedClientCode);
       if (selectedCampaignCode !== 'ALL') url.searchParams.set('campaignCode', selectedCampaignCode);
+      if (agentFilter !== 'ALL') url.searchParams.set('agent', agentFilter);
+      if (qaFilter !== 'ALL') url.searchParams.set('qaStatus', qaFilter);
+      if (queueDateFilter !== 'ALL') url.searchParams.set('date', queueDateFilter);
+      if (recordingFilter !== 'ALL') url.searchParams.set('recording', recordingFilter);
+      if (stageFilter !== 'ALL') url.searchParams.set('stage', stageFilter);
       if (searchQuery) url.searchParams.set('search', searchQuery);
       url.searchParams.set('page', currentPage.toString());
       url.searchParams.set('limit', pageSize.toString());
@@ -170,11 +187,15 @@ export default function Home() {
       const data = await res.json();
       if (data.success) {
         setJobs(data.jobs);
+        if (Array.isArray(data.agents)) setAgentOptions(data.agents);
         if (typeof data.isProcessingPaused === 'boolean') {
           setIsProcessingPaused(data.isProcessingPaused);
         }
         if (data.queueStats) {
           setQueueStats(data.queueStats);
+        }
+        if (data.qualitySummary) {
+          setQualitySummary(data.qualitySummary);
         }
         if (data.pagination) {
           setPaginationInfo(data.pagination);
@@ -183,7 +204,7 @@ export default function Home() {
     } catch (err) {
       console.error('Error fetching queue data:', err);
     }
-  }, [queueTab, selectedClientCode, selectedCampaignCode, searchQuery, currentPage, pageSize]);
+  }, [queueTab, selectedClientCode, selectedCampaignCode, agentFilter, qaFilter, queueDateFilter, recordingFilter, stageFilter, searchQuery, currentPage, pageSize]);
 
   // Load jobs & dashboard stats
   const fetchJobs = useCallback(async () => {
@@ -194,7 +215,14 @@ export default function Home() {
       const url = new URL(activeTab === 'all-leads' ? '/api/leads' : '/api/jobs', window.location.href);
       if (selectedClientCode !== 'ALL') url.searchParams.set('clientCode', selectedClientCode);
       if (selectedCampaignCode !== 'ALL') url.searchParams.set('campaignCode', selectedCampaignCode);
-      if (statusFilter !== 'ALL') url.searchParams.set('status', statusFilter);
+      if (activeTab === 'all-leads') {
+        if (statusFilter !== 'ALL') url.searchParams.set('processingStatus', statusFilter);
+        if (agentFilter !== 'ALL') url.searchParams.set('agent', agentFilter);
+        if (dateFilter !== 'ALL') url.searchParams.set('date', dateFilter);
+        if (recordingFilter !== 'ALL') url.searchParams.set('recording', recordingFilter);
+      } else if (statusFilter !== 'ALL') {
+        url.searchParams.set('status', statusFilter);
+      }
       if (qaFilter !== 'ALL') url.searchParams.set('qaStatus', qaFilter);
       if (searchQuery) url.searchParams.set('search', searchQuery);
       url.searchParams.set('page', currentPage.toString());
@@ -204,6 +232,7 @@ export default function Home() {
       const data = await res.json();
       if (data.success) {
         setJobs(data.jobs);
+        if (Array.isArray(data.agents)) setAgentOptions(data.agents);
         setStats(data.stats);
         if (typeof data.isProcessingPaused === 'boolean') {
           setIsProcessingPaused(data.isProcessingPaused);
@@ -221,7 +250,7 @@ export default function Home() {
     } catch (err) {
       console.error('Error fetching jobs:', err);
     }
-  }, [activeTab, fetchQueueData, selectedClientCode, selectedCampaignCode, statusFilter, qaFilter, searchQuery, currentPage, pageSize]);
+  }, [activeTab, fetchQueueData, selectedClientCode, selectedCampaignCode, statusFilter, qaFilter, agentFilter, dateFilter, recordingFilter, searchQuery, currentPage, pageSize]);
 
   // Fetch queue stats independently to keep sidebar badge updated
   const updateQueueBadge = useCallback(async () => {
@@ -242,6 +271,40 @@ export default function Home() {
   // Reset page to 1 when filters change
   const handleClientCodeChange = (code: string) => {
     setSelectedClientCode(code);
+    setSelectedCampaignCode('ALL');
+    setCurrentPage(1);
+  };
+  const handleAgentFilterChange = (agent: string) => {
+    setAgentFilter(agent);
+    setCurrentPage(1);
+  };
+  const handleDateFilterChange = (date: string) => {
+    setDateFilter(date);
+    setCurrentPage(1);
+  };
+  const handleQueueDateFilterChange = (date: string) => {
+    setQueueDateFilter(date);
+    setCurrentPage(1);
+  };
+  const handleRecordingFilterChange = (recording: string) => {
+    setRecordingFilter(recording);
+    setCurrentPage(1);
+  };
+  const handleStageFilterChange = (stage: string) => {
+    setStageFilter(stage);
+    setCurrentPage(1);
+  };
+  const clearTableFilters = () => {
+    setSelectedClientCode('ALL');
+    setSelectedCampaignCode('ALL');
+    setStatusFilter('ALL');
+    setQaFilter('ALL');
+    setAgentFilter('ALL');
+    setDateFilter('ALL');
+    setQueueDateFilter('today');
+    setRecordingFilter('ALL');
+    setStageFilter('ALL');
+    setSearchQuery('');
     setCurrentPage(1);
   };
   const handleCampaignCodeChange = (code: string) => {
@@ -369,6 +432,16 @@ export default function Home() {
     } finally {
       setIsProcessing(false);
     }
+  };
+
+  const handleQueueMove = async (job: ProcessingJobItem) => {
+    await fetchJobs();
+    await updateQueueBadge();
+    if (job.status === 'SKIPPED') {
+      notify('info', 'Skipped. Open the Skipped tab to see this lead.');
+      return;
+    }
+    notify('info', 'Returned to the active queue.');
   };
 
   const handleJobFinished = async (job: ProcessingJobItem) => {
@@ -539,6 +612,14 @@ export default function Home() {
               setStatusFilter={handleStatusFilterChange}
               qaFilter={qaFilter}
               setQaFilter={handleQaFilterChange}
+              agentFilter={agentFilter}
+              setAgentFilter={handleAgentFilterChange}
+              dateFilter={dateFilter}
+              setDateFilter={handleDateFilterChange}
+              recordingFilter={recordingFilter}
+              setRecordingFilter={handleRecordingFilterChange}
+              agentOptions={agentOptions}
+              onClearFilters={clearTableFilters}
               searchQuery={searchQuery}
               setSearchQuery={handleSearchQueryChange}
               pagination={paginationInfo}
@@ -551,6 +632,9 @@ export default function Home() {
               onRetryJob={handleRetryJob}
               onJobFinished={handleJobFinished}
               onActionError={(message) => notify('warning', message)}
+              onDeleted={() => {
+                void fetchJobs();
+              }}
               isProcessingPaused={isProcessingPaused}
               onTogglePause={handleTogglePause}
             />
@@ -573,6 +657,19 @@ export default function Home() {
               setSelectedClientCode={handleClientCodeChange}
               selectedCampaignCode={selectedCampaignCode}
               setSelectedCampaignCode={handleCampaignCodeChange}
+              qaFilter={qaFilter}
+              setQaFilter={handleQaFilterChange}
+              agentFilter={agentFilter}
+              setAgentFilter={handleAgentFilterChange}
+              dateFilter={queueDateFilter}
+              setDateFilter={handleQueueDateFilterChange}
+              recordingFilter={recordingFilter}
+              setRecordingFilter={handleRecordingFilterChange}
+              stageFilter={stageFilter}
+              qualitySummary={qualitySummary}
+              setStageFilter={handleStageFilterChange}
+              agentOptions={agentOptions}
+              onClearFilters={clearTableFilters}
               searchQuery={searchQuery}
               setSearchQuery={handleSearchQueryChange}
               pagination={paginationInfo}
@@ -581,6 +678,11 @@ export default function Home() {
               onRetryJob={handleRetryJob}
               onJobFinished={handleJobFinished}
               onActionError={(message) => notify('warning', message)}
+              onMoved={handleQueueMove}
+              onDeleted={() => {
+                void fetchJobs();
+                void updateQueueBadge();
+              }}
               onProcessQueue={handleProcessQueue}
               isProcessing={isProcessing}
               isProcessingPaused={isProcessingPaused}

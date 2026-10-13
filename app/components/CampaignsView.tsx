@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import { Plus, Layers, Shield, Edit, Trash2, Tag, FileText, CheckSquare, Minimize2, Maximize2 } from 'lucide-react';
 import { ClientConfig, CampaignConfig } from '../../lib/types';
+import { usePopup } from './ui/Popup';
 
 interface CampaignsViewProps {
   clients: ClientConfig[];
@@ -11,6 +12,7 @@ interface CampaignsViewProps {
 }
 
 export default function CampaignsView({ clients, campaigns, onRefresh }: CampaignsViewProps) {
+  const popup = usePopup();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingCampaign, setEditingCampaign] = useState<Partial<CampaignConfig> | null>(null);
   const [name, setName] = useState('');
@@ -101,7 +103,7 @@ export default function CampaignsView({ clients, campaigns, onRefresh }: Campaig
         onRefresh();
       } else {
         const err = await res.json();
-        alert(`Error saving campaign: ${err.error}`);
+        await popup.message({ title: 'Could not save campaign', message: err.error || 'The campaign could not be saved.', tone: 'warning' });
       }
     } finally {
       setIsSubmitting(false);
@@ -109,16 +111,26 @@ export default function CampaignsView({ clients, campaigns, onRefresh }: Campaig
   };
 
   const handleDelete = async (campaignCode: string) => {
-    if (!confirm(`Are you sure you want to deactivate/delete campaign ${campaignCode}?`)) return;
+    const accepted = await popup.confirm({
+      title: 'Delete campaign',
+      message: `Delete campaign ${campaignCode}? Leads already in the queue stay.`,
+      confirmLabel: 'Delete',
+      tone: 'danger',
+    });
+    if (!accepted) return;
     try {
       const res = await fetch(`/api/campaigns?code=${encodeURIComponent(campaignCode)}`, {
         method: 'DELETE',
       });
       if (res.ok) {
         onRefresh();
+        await popup.message({ title: 'Campaign deleted', message: `${campaignCode} has been deleted.`, tone: 'success' });
+      } else {
+        const data = await res.json().catch(() => ({}));
+        await popup.message({ title: 'Could not delete campaign', message: data.error || 'The campaign could not be deleted.', tone: 'warning' });
       }
     } catch (e: any) {
-      alert(`Error deleting campaign: ${e.message}`);
+      await popup.message({ title: 'Could not delete campaign', message: e.message, tone: 'warning' });
     }
   };
 

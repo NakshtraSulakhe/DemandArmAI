@@ -39,6 +39,14 @@ interface AllLeadsViewProps {
   setStatusFilter: (status: string) => void;
   qaFilter: string;
   setQaFilter: (qa: string) => void;
+  agentFilter: string;
+  setAgentFilter: (agent: string) => void;
+  dateFilter: string;
+  setDateFilter: (date: string) => void;
+  recordingFilter: string;
+  setRecordingFilter: (recording: string) => void;
+  agentOptions: string[];
+  onClearFilters: () => void;
   searchQuery: string;
   setSearchQuery: (query: string) => void;
   pagination: {
@@ -53,6 +61,7 @@ interface AllLeadsViewProps {
   onRetryJob: (jobId: string) => void;
   onJobFinished: (job: ProcessingJobItem) => void;
   onActionError: (message: string) => void;
+  onDeleted?: () => void;
   isProcessingPaused?: boolean;
   onTogglePause?: () => void;
 }
@@ -68,6 +77,16 @@ export default function AllLeadsView({
   setSelectedCampaignCode,
   qaFilter,
   setQaFilter,
+  statusFilter,
+  setStatusFilter,
+  agentFilter,
+  setAgentFilter,
+  dateFilter,
+  setDateFilter,
+  recordingFilter,
+  setRecordingFilter,
+  agentOptions,
+  onClearFilters,
   searchQuery,
   setSearchQuery,
   pagination,
@@ -77,6 +96,7 @@ export default function AllLeadsView({
   onRetryJob,
   onJobFinished,
   onActionError,
+  onDeleted,
   isProcessingPaused = false,
   onTogglePause,
 }: AllLeadsViewProps) {
@@ -84,6 +104,8 @@ export default function AllLeadsView({
     selectedClientCode !== 'ALL'
       ? campaigns.filter((c) => c.clientCode.toUpperCase() === selectedClientCode.toUpperCase())
       : campaigns;
+  const filtersActive = [selectedClientCode, selectedCampaignCode, statusFilter, qaFilter, agentFilter, dateFilter, recordingFilter, searchQuery].some((value) => value && value !== 'ALL');
+  const filterClass = 'bg-slate-950/60 border border-slate-800/60 rounded-xl px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-blue-500/80 transition-all';
 
   return (
     <div className="space-y-6">
@@ -206,7 +228,8 @@ export default function AllLeadsView({
             <select
               value={selectedClientCode}
               onChange={(e) => setSelectedClientCode(e.target.value)}
-              className="bg-slate-950/60 border border-slate-800/60 rounded-xl px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-blue-500/80 transition-all"
+              className={filterClass}
+              aria-label="Client"
             >
               <option value="ALL">All Clients</option>
               {clients.map((client) => (
@@ -219,7 +242,8 @@ export default function AllLeadsView({
             <select
               value={selectedCampaignCode}
               onChange={(e) => setSelectedCampaignCode(e.target.value)}
-              className="bg-slate-950/60 border border-slate-800/60 rounded-xl px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-blue-500/80 transition-all"
+              className={filterClass}
+              aria-label="Campaign"
             >
               <option value="ALL">All Campaigns</option>
               {availableCampaigns.map((cmp) => (
@@ -232,7 +256,8 @@ export default function AllLeadsView({
             <select
               value={qaFilter}
               onChange={(e) => setQaFilter(e.target.value)}
-              className="bg-slate-950/60 border border-slate-800/60 rounded-xl px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-blue-500/80 transition-all"
+              className={filterClass}
+              aria-label="Quality"
             >
               <option value="ALL">All QA Statuses</option>
               <option value="QUALIFIED">Qualified</option>
@@ -240,6 +265,44 @@ export default function AllLeadsView({
               <option value="Pending QA">Pending QA</option>
               <option value="REJECTED">Rejected</option>
             </select>
+
+            <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className={filterClass} aria-label="Pipeline status">
+              <option value="ALL">All pipeline statuses</option>
+              <option value="Queued">Queued</option>
+              <option value="Processing">Processing</option>
+              <option value="Completed">Completed</option>
+              <option value="Failed">Failed</option>
+              <option value="Skipped">Skipped</option>
+              <option value="Waiting Recording">Waiting for recording</option>
+              <option value="Not Eligible">Not eligible</option>
+            </select>
+
+            <select value={agentFilter} onChange={(e) => setAgentFilter(e.target.value)} className={filterClass} aria-label="Agent">
+              <option value="ALL">All agents</option>
+              {agentOptions.map((agent) => (
+                <option key={agent} value={agent}>{agent}</option>
+              ))}
+            </select>
+
+            <select value={dateFilter} onChange={(e) => setDateFilter(e.target.value)} className={filterClass} aria-label="Created date">
+              <option value="ALL">All dates</option>
+              <option value="today">Today (UTC)</option>
+              <option value="7">Last 7 days</option>
+              <option value="30">Last 30 days</option>
+            </select>
+
+            <select value={recordingFilter} onChange={(e) => setRecordingFilter(e.target.value)} className={filterClass} aria-label="Recording">
+              <option value="ALL">All recordings</option>
+              <option value="yes">Has recording</option>
+              <option value="no">No recording</option>
+            </select>
+
+            {filtersActive && (
+              <button type="button" onClick={onClearFilters} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold text-slate-300 border border-slate-700 hover:text-slate-100 hover:border-slate-500">
+                <FilterX className="w-3.5 h-3.5" />
+                Clear filters
+              </button>
+            )}
           </div>
 
           <div className="text-xs text-slate-400 font-medium">
@@ -249,25 +312,25 @@ export default function AllLeadsView({
 
         {/* All Leads CRM Table */}
         <div className="overflow-x-auto">
-          <table className="w-full table-fixed border-collapse text-left text-xs">
+          <table className="lead-table w-full min-w-[54rem] table-fixed border-collapse text-left text-xs">
             <colgroup>
               <col className="w-14" />
-              <col className="w-28" />
+              <col className="w-[6.5rem]" />
               <col />
               <col />
               <col />
-              <col className="w-[7.5rem]" />
-              <col className="w-[17.5rem]" />
+              <col className="w-[8rem]" />
+              <col className="w-[12rem]" />
             </colgroup>
             <thead className="bg-slate-900/60 text-slate-400 font-bold uppercase tracking-wider border-b border-slate-800/40">
               <tr>
-                <th className="py-3.5 px-4 w-16 text-center">SR NO.</th>
-                <th className="py-3.5 px-4">CREATED DATE</th>
-                <th className="py-3.5 px-4">LEAD INFO</th>
-                <th className="py-3.5 px-4">COMPANY</th>
-                <th className="py-3.5 px-4">CAMPAIGN/AGENT</th>
-                <th className="py-3.5 px-4">QUALITY</th>
-                <th className="py-3 px-3 text-right">ACTIONS</th>
+                <th className="py-3 px-2 text-center">SR</th>
+                <th className="py-3 px-3">CREATED</th>
+                <th className="py-3 px-3">LEAD</th>
+                <th className="py-3 px-3">COMPANY</th>
+                <th className="py-3 px-3" title="Campaign and agent">CAMPAIGN</th>
+                <th className="py-3 px-3">QUALITY</th>
+                <th className="py-3 px-2 text-right">ACTIONS</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/20 bg-slate-950/20 text-slate-300">
@@ -279,13 +342,18 @@ export default function AllLeadsView({
                   const effectiveQa = job.manualOverrideStatus || job.qaStatus || rawQaStatus;
 
                   const createdDateObj = new Date(lead?.createdAt || lead?.syncedAt || job.createdAt);
-                  const formattedDate = createdDateObj.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
-                  const formattedTime = createdDateObj.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+                  const validDate = !Number.isNaN(createdDateObj.getTime());
+                  const formattedDate = validDate
+                    ? createdDateObj.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' })
+                    : '—';
+                  const formattedTime = validDate
+                    ? `${createdDateObj.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'UTC' })} UTC`
+                    : '';
 
                   return (
                     <tr key={job.id} className="hover:bg-indigo-500/10 transition-all">
                       {/* SR NO. */}
-                      <td className="px-3 py-2 text-center align-middle font-bold font-mono text-slate-400">{srNo}</td>
+                      <td className="px-2 py-2 text-center align-middle font-bold font-mono text-slate-400">{srNo}</td>
 
                       {/* CREATED DATE */}
                       <td className="whitespace-nowrap px-3 py-2 align-middle">
@@ -326,17 +394,17 @@ export default function AllLeadsView({
                           {lead?.agentName || 'Unassigned'}
                         </div>
                         {job.stepError && (
-                          <div className="mt-0.5 max-w-[220px] truncate text-[11px] text-amber-300" title={job.stepError}>{job.stepError}</div>
+                          <div className="mt-0.5 truncate text-[11px] text-amber-300" title={job.stepError}>{job.stepError}</div>
                         )}
                       </td>
 
                       {/* QUALITY BADGE */}
-                      <td className="whitespace-nowrap px-3 py-2 align-middle">
+                      <td className="overflow-hidden px-3 py-2 align-middle">
                         <StatusBadge status={effectiveQa} size="sm" />
                       </td>
 
                       {/* ACTIONS */}
-                      <td className="whitespace-nowrap px-3 py-2 text-right align-middle">
+                      <td className="px-2 py-2 text-right align-middle">
                         <RowActions
                           job={job}
                           reviewLabel="Details"
@@ -344,6 +412,7 @@ export default function AllLeadsView({
                           onRetry={onRetryJob}
                           onFinished={onJobFinished}
                           onError={onActionError}
+                          onDeleted={onDeleted}
                         />
                       </td>
                     </tr>

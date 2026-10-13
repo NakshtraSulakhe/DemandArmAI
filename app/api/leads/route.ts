@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { dbStore, qaCategory } from '../../../lib/db/store';
+import { dbStore, matchesDateRange, qaCategory } from '../../../lib/db/store';
 import { CrmLeadItem, ProcessingJobItem } from '../../../lib/types';
 
 export async function GET(req: Request) {
@@ -11,6 +11,9 @@ export async function GET(req: Request) {
     const processingStatus = searchParams.get('processingStatus');
     const transcriptStatus = searchParams.get('transcriptStatus');
     const search = searchParams.get('search');
+    const agent = searchParams.get('agent');
+    const dateRange = searchParams.get('date');
+    const recording = searchParams.get('recording');
     const rawPage = parseInt(searchParams.get('page') || '1', 10);
     const page = isNaN(rawPage) || rawPage < 1 ? 1 : rawPage;
     const limitParam = searchParams.get('limit');
@@ -44,6 +47,9 @@ export async function GET(req: Request) {
         } else if (job.status === 'FAILED') {
           effectiveProcStatus = 'Failed';
           effectiveTranscriptStatus = 'Failed';
+        } else if (job.status === 'SKIPPED') {
+          effectiveProcStatus = 'Skipped';
+          effectiveTranscriptStatus = 'Not Generated';
         } else if (['AUDIO_RETRIEVED', 'TRANSCRIBING', 'AI_EDITING', 'QA_EVALUATING'].includes(job.status)) {
           effectiveProcStatus = 'Processing';
           effectiveTranscriptStatus = 'Generating';
@@ -86,6 +92,23 @@ export async function GET(req: Request) {
       mappedLeads = mappedLeads.filter((l) => (l.campaignCode || '').toUpperCase() === campaignCode.toUpperCase());
     }
 
+    const agents = [...new Set(mappedLeads.map((l) => (l.agentName || '').trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+
+    if (agent && agent !== 'ALL') {
+      mappedLeads = mappedLeads.filter((l) => (l.agentName || '').trim().toLowerCase() === agent.trim().toLowerCase());
+    }
+
+    if (dateRange && dateRange !== 'ALL') {
+      mappedLeads = mappedLeads.filter((l) => matchesDateRange(l.createdAt || l.syncedAt, dateRange));
+    }
+
+    if (recording === 'yes' || recording === 'no') {
+      mappedLeads = mappedLeads.filter((l) => {
+        const hasRecording = !!(l.recordingUrl || (l.recordings && l.recordings.length > 0));
+        return recording === 'yes' ? hasRecording : !hasRecording;
+      });
+    }
+
     if (crmQaStatus && crmQaStatus !== 'ALL') {
       const wanted = crmQaStatus === 'Pending QA' ? 'PENDING' : crmQaStatus;
       mappedLeads = mappedLeads.filter((l) => qaCategory(l.job?.manualOverrideStatus || l.job?.qaStatus || l.qaStatusCrm) === wanted);
@@ -107,7 +130,9 @@ export async function GET(req: Request) {
           l.companyName?.toLowerCase().includes(s) ||
           l.contactName?.toLowerCase().includes(s) ||
           l.email?.toLowerCase().includes(s) ||
-          l.phone?.toLowerCase().includes(s)
+          l.phone?.toLowerCase().includes(s) ||
+          l.agentName?.toLowerCase().includes(s) ||
+          l.campaignName?.toLowerCase().includes(s)
       );
     }
 
@@ -154,6 +179,7 @@ export async function GET(req: Request) {
 
     return NextResponse.json({
       success: true,
+      agents,
       stats,
       pagination: {
         page: validPage,

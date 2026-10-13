@@ -781,19 +781,21 @@ export default function LeadDetailModal({
                 Processing Lifecycle & Manual Override Audit Log
               </h3>
               <div className="relative border-l-2 border-slate-800 ml-3 space-y-6 py-2">
-                {job.auditLogs?.map((log) => (
+                {(job.auditLogs || []).length === 0 ? (
+                  <div className="pl-6 text-xs text-slate-500">No audit logs recorded.</div>
+                ) : (
+                  [...(job.auditLogs || [])].sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()).map((log) => (
                   <div key={log.id} className="relative pl-6">
                     <div className="absolute -left-[9px] top-1 w-4 h-4 rounded-full bg-slate-800 border-2 border-blue-500" />
                     <div className="flex items-center gap-3">
-                      <span className="text-xs font-bold text-slate-200">{log.action}</span>
+                      <span className="text-xs font-bold text-slate-200">{log.action.replaceAll('_', ' ')}</span>
                       <span className="text-[10px] font-mono text-slate-500">
                         {new Date(log.timestamp).toLocaleString()}
                       </span>
                     </div>
                     <p className="text-xs text-slate-400 mt-1">{log.details}</p>
                   </div>
-                )) || (
-                  <div className="pl-6 text-xs text-slate-500">No audit logs recorded.</div>
+                  ))
                 )}
               </div>
             </div>

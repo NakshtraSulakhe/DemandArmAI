@@ -1,11 +1,13 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Clock,
   Play,
   AlertTriangle,
   CheckCircle2,
+  FilterX,
+  SkipForward,
   ListFilter,
   Search,
   Activity,
@@ -19,26 +21,89 @@ import {
 } from 'lucide-react';
 import { ClientConfig, CampaignConfig, ProcessingJobItem } from '../../lib/types';
 import StatusBadge from './ui/StatusBadge';
+import { usePopup } from './ui/Popup';
 import EmptyState from './ui/EmptyState';
 import RowActions from './ui/RowActions';
+
+export type QueueTab = 'active' | 'failed' | 'completed' | 'skipped';
+
+function crmCreatedDate(value?: string): Date {
+  if (!value) return new Date(NaN);
+  const trimmed = value.trim();
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}/.test(trimmed)) {
+    return new Date(`${trimmed.replace(' ', 'T')}Z`);
+  }
+  return new Date(trimmed);
+}
+
+const PROCESS_STEPS = [
+  { key: 'recording', label: '1', name: 'Recording', short: 'Audio' },
+  { key: 'transcript', label: '2', name: 'Transcript', short: 'Text' },
+  { key: 'edit', label: '3', name: 'Edit', short: 'Edit' },
+  { key: 'score', label: '4', name: 'Score', short: 'Score' },
+] as const;
+
+function ProcessSequence({ job }: { job: ProcessingJobItem }) {
+  const done: Record<(typeof PROCESS_STEPS)[number]['key'], boolean> = {
+    recording: !!(job.gcsAudioUri || job.lead?.recordingUrl || job.rawTranscript),
+    transcript: !!job.rawTranscript,
+    edit: !!job.editedTranscript,
+    score: !!(job.qaResultJson || job.qaStatus),
+  };
+
+  return (
+    <div className="process-sequence" aria-label="Process sequence">
+      {PROCESS_STEPS.map((step, index) => (
+        <React.Fragment key={step.key}>
+          {index > 0 && <span className="process-arrow" aria-hidden="true">→</span>}
+          <span
+            className={`process-step ${done[step.key] ? 'done' : 'missed'}`}
+            title={`${step.label} ${step.name}: ${done[step.key] ? 'done' : 'did not run'}`}
+            aria-label={`${step.name} ${done[step.key] ? 'done' : 'did not run'}`}
+          >
+            {step.label} {step.short}
+          </span>
+        </React.Fragment>
+      ))}
+    </div>
+  );
+}
 
 interface QueueViewProps {
   queueStats: {
     waitingCount: number;
     processingCount: number;
     failedCount: number;
+    skippedCount: number;
     completedTodayCount: number;
     activeCount: number;
+  };
+  qualitySummary: {
+    utcDay: string;
+    scoredCount: number;
+    averageQuality: number | null;
   };
   jobs: ProcessingJobItem[];
   clients: ClientConfig[];
   campaigns: CampaignConfig[];
-  selectedTab: 'active' | 'failed' | 'completed';
-  onTabChange: (tab: 'active' | 'failed' | 'completed') => void;
+  selectedTab: QueueTab;
+  onTabChange: (tab: QueueTab) => void;
   selectedClientCode: string;
   setSelectedClientCode: (code: string) => void;
   selectedCampaignCode: string;
   setSelectedCampaignCode: (code: string) => void;
+  qaFilter: string;
+  setQaFilter: (qa: string) => void;
+  agentFilter: string;
+  setAgentFilter: (agent: string) => void;
+  dateFilter: string;
+  setDateFilter: (date: string) => void;
+  recordingFilter: string;
+  setRecordingFilter: (recording: string) => void;
+  stageFilter: string;
+  setStageFilter: (stage: string) => void;
+  agentOptions: string[];
+  onClearFilters: () => void;
   searchQuery: string;
   setSearchQuery: (q: string) => void;
   pagination: {
@@ -52,6 +117,8 @@ interface QueueViewProps {
   onRetryJob: (jobId: string) => void;
   onJobFinished: (job: ProcessingJobItem) => void;
   onActionError: (message: string) => void;
+  onMoved: (job: ProcessingJobItem) => void;
+  onDeleted?: () => void;
   onProcessQueue: () => void;
   isProcessing: boolean;
   isProcessingPaused?: boolean;
@@ -60,6 +127,7 @@ interface QueueViewProps {
 
 export default function QueueView({
   queueStats,
+  qualitySummary,
   jobs,
   clients,
   campaigns,
@@ -69,6 +137,18 @@ export default function QueueView({
   setSelectedClientCode,
   selectedCampaignCode,
   setSelectedCampaignCode,
+  qaFilter,
+  setQaFilter,
+  agentFilter,
+  setAgentFilter,
+  dateFilter,
+  setDateFilter,
+  recordingFilter,
+  setRecordingFilter,
+  stageFilter,
+  setStageFilter,
+  agentOptions,
+  onClearFilters,
   searchQuery,
   setSearchQuery,
   pagination,
@@ -77,16 +157,38 @@ export default function QueueView({
   onRetryJob,
   onJobFinished,
   onActionError,
+  onMoved,
+  onDeleted,
   onProcessQueue,
   isProcessing,
   isProcessingPaused = false,
   onTogglePause,
 }: QueueViewProps) {
+  const popup = usePopup();
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const pageIds = jobs.map((job) => job.id);
+  const allPageSelected = pageIds.length > 0 && pageIds.every((id) => selectedIds.includes(id));
+  const somePageSelected = pageIds.some((id) => selectedIds.includes(id));
+
+  useEffect(() => {
+    const visible = new Set(pageIds);
+    setSelectedIds((current) => {
+      const next = current.filter((id) => visible.has(id));
+      return next.length === current.length ? current : next;
+    });
+  }, [pageIds.join('|')]);
+
+  const toggleSelectAll = () => {
+    setSelectedIds((current) =>
+      allPageSelected ? current.filter((id) => !pageIds.includes(id)) : Array.from(new Set([...current, ...pageIds]))
+    );
+  };
   const availableCampaigns =
     selectedClientCode !== 'ALL'
       ? campaigns.filter((cmp) => cmp.clientCode.toUpperCase() === selectedClientCode.toUpperCase())
       : campaigns;
+  const filtersActive = [selectedClientCode, selectedCampaignCode, qaFilter, agentFilter, dateFilter, recordingFilter, stageFilter, searchQuery].some((value) => value && value !== 'ALL');
+  const filterClass = 'px-3 py-1.5 bg-slate-950/60 border border-slate-800/60 rounded-xl text-xs text-slate-300 focus:outline-none focus:border-blue-500';
 
   return (
     <div className="space-y-6">
@@ -98,7 +200,7 @@ export default function QueueView({
             QA Audit & Transcript Queue
           </h2>
           <p className="text-xs text-slate-400 mt-1">
-            Leads waiting for quality review and automated Speech-to-Text & Gemini AI editing.
+            The running pipeline starts only leads whose CRM status is Pending QA.
           </p>
         </div>
 
@@ -191,6 +293,24 @@ export default function QueueView({
 
             <button
               type="button"
+              onClick={() => onTabChange('skipped')}
+              className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer select-none ${
+                selectedTab === 'skipped'
+                  ? 'bg-slate-600 text-white shadow-md shadow-slate-600/25'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <SkipForward className="w-3.5 h-3.5 pointer-events-none" />
+              <span className="pointer-events-none">Skipped</span>
+              {queueStats.skippedCount > 0 && (
+                <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-slate-900 text-slate-200 ml-1 pointer-events-none">
+                  {queueStats.skippedCount}
+                </span>
+              )}
+            </button>
+
+            <button
+              type="button"
               onClick={() => onTabChange('completed')}
               className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer select-none ${
                 selectedTab === 'completed'
@@ -236,7 +356,8 @@ export default function QueueView({
             <select
               value={selectedCampaignCode}
               onChange={(e) => setSelectedCampaignCode(e.target.value)}
-              className="px-3 py-1.5 bg-slate-950/60 border border-slate-800/60 rounded-xl text-xs text-slate-300 focus:outline-none focus:border-blue-500"
+              className={filterClass}
+              aria-label="Campaign"
             >
               <option value="ALL">All Campaigns</option>
               {availableCampaigns.map((cmp) => (
@@ -245,31 +366,155 @@ export default function QueueView({
                 </option>
               ))}
             </select>
+
+            <select value={qaFilter} onChange={(e) => setQaFilter(e.target.value)} className={filterClass} aria-label="Quality">
+              <option value="ALL">All QA statuses</option>
+              <option value="QUALIFIED">Qualified</option>
+              <option value="NEEDS_REVIEW">Needs Review</option>
+              <option value="Pending QA">Pending QA</option>
+              <option value="REJECTED">Rejected</option>
+            </select>
+
+            <select value={agentFilter} onChange={(e) => setAgentFilter(e.target.value)} className={filterClass} aria-label="Agent">
+              <option value="ALL">All agents</option>
+              {agentOptions.map((agent) => (
+                <option key={agent} value={agent}>{agent}</option>
+              ))}
+            </select>
+
+            <select value={dateFilter} onChange={(e) => setDateFilter(e.target.value)} className={filterClass} aria-label="Date">
+              <option value="ALL">All dates</option>
+              <option value="today">Today (UTC)</option>
+              <option value="7">Last 7 days</option>
+              <option value="30">Last 30 days</option>
+            </select>
+
+            <select value={recordingFilter} onChange={(e) => setRecordingFilter(e.target.value)} className={filterClass} aria-label="Recording">
+              <option value="ALL">All recordings</option>
+              <option value="yes">Has recording</option>
+              <option value="no">No recording</option>
+            </select>
+
+            {selectedTab === 'active' && (
+              <select value={stageFilter} onChange={(e) => setStageFilter(e.target.value)} className={filterClass} aria-label="Pipeline stage">
+                <option value="ALL">All stages</option>
+                <option value="WAITING">Waiting</option>
+                <option value="RUNNING">Running</option>
+                <option value="SETUP">Needs setup</option>
+              </select>
+            )}
+
+            {filtersActive && (
+              <button type="button" onClick={onClearFilters} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold text-slate-300 border border-slate-700 hover:text-slate-100 hover:border-slate-500">
+                <FilterX className="w-3.5 h-3.5" />
+                Clear filters
+              </button>
+            )}
           </div>
         </div>
+        <p className="px-4 py-2 text-[11px] text-slate-400 border-b border-slate-800/40 bg-slate-950/20">
+          {dateFilter === 'today'
+            ? `Current UTC day ${qualitySummary.utcDay || ''}. This list and the lead counts use UTC, so the US workday stays on one date from India.`
+            : 'Date filter is using UTC. Choose Today (UTC) to see the current US workday.'}
+          {qualitySummary.scoredCount > 0 && qualitySummary.averageQuality !== null
+            ? ` Average call quality in this view: ${qualitySummary.averageQuality}%.`
+            : ' No scored call in this view yet.'}
+          {selectedTab === 'completed' ? ' Finished leads stay in completion order.' : ''}
+        </p>
 
         {/* Queue Table */}
         <div className="overflow-x-auto">
-          <table className="w-full table-fixed border-collapse text-left text-xs">
+          <table className="lead-table w-full min-w-[54rem] table-fixed border-collapse text-left text-xs">
             <colgroup>
-              <col className="w-14" />
-              <col className="w-28" />
+              <col className="w-16" />
+              <col className="w-[6.5rem]" />
               <col />
               <col />
               <col />
-              <col className="w-[7.5rem]" />
-              <col className="w-[17.5rem]" />
+              <col className="w-[9.5rem]" />
+              <col className="w-[12rem]" />
             </colgroup>
             {selectedIds.length > 0 && (
               <caption className="px-4 py-2 text-left">
                 <div className="flex items-center gap-2">
                   <span className="text-[11px] text-slate-300">{selectedIds.length} selected</span>
+                  {(selectedTab === 'active' || selectedTab === 'failed') && (
+                    <button
+                      type="button"
+                      className="btn-secondary"
+                      onClick={() => {
+                        const ids = [...selectedIds];
+                        setSelectedIds([]);
+                        void (async () => {
+                          await Promise.all(ids.map((id) => fetch(`/api/jobs/${id}/skip`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ restore: false }),
+                          })));
+                          onMoved({ id: ids[0], status: 'SKIPPED' } as ProcessingJobItem);
+                        })();
+                      }}
+                    >
+                      Skip selected
+                    </button>
+                  )}
                   <button
                     type="button"
                     className="btn-secondary"
                     onClick={() => selectedIds.forEach((id) => onRetryJob(id))}
                   >
                     Batch retry
+                  </button>
+                  <button
+                    type="button"
+                    className="action-btn action-delete action-compact"
+                    onClick={() => {
+                      const ids = [...selectedIds];
+                      const count = ids.length;
+                      void (async () => {
+                        const accepted = await popup.confirm({
+                          title: 'Delete selected leads',
+                          message: `Delete ${count} selected lead${count === 1 ? '' : 's'}? They leave the queue and All Leads, and the pipeline will not pick them up again.`,
+                          confirmLabel: 'Delete',
+                          tone: 'danger',
+                        });
+                        if (!accepted) return;
+                        try {
+                          const res = await fetch('/api/leads/delete', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ ids }),
+                          });
+                          const data = await res.json();
+                          if (!data.success) {
+                            await popup.message({
+                              title: 'Could not delete',
+                              message: data.error || 'These leads could not be deleted.',
+                              tone: 'warning',
+                            });
+                            return;
+                          }
+                          setSelectedIds([]);
+                          onDeleted?.();
+                          const leftBehind = Array.isArray(data.blocked) && data.blocked.length > 0
+                            ? ` ${data.blocked.length} still processing and left in the queue.`
+                            : '';
+                          await popup.message({
+                            title: 'Leads deleted',
+                            message: `${data.deleted.length} lead${data.deleted.length === 1 ? '' : 's'} deleted.${leftBehind}`,
+                            tone: 'success',
+                          });
+                        } catch (err: unknown) {
+                          await popup.message({
+                            title: 'Could not delete',
+                            message: err instanceof Error ? err.message : 'These leads could not be deleted.',
+                            tone: 'warning',
+                          });
+                        }
+                      })();
+                    }}
+                  >
+                    Delete selected
                   </button>
                   <button
                     type="button"
@@ -291,13 +536,28 @@ export default function QueueView({
             )}
             <thead className="sticky top-0 z-10 bg-slate-950/95 text-slate-400 font-bold uppercase tracking-wider border-b border-slate-800/40">
               <tr>
-                <th className="py-3.5 px-4 w-16 text-center">SR NO.</th>
-                <th className="py-3.5 px-4">CREATED DATE</th>
-                <th className="py-3.5 px-4">LEAD INFO</th>
-                <th className="py-3.5 px-4">COMPANY</th>
-                <th className="py-3.5 px-4">CAMPAIGN/AGENT</th>
-                <th className="py-3.5 px-4">QUALITY</th>
-                <th className="py-3 px-3 text-right">ACTIONS</th>
+                <th className="py-3 px-2 text-center">
+                  <label className="inline-flex items-center justify-center gap-1.5">
+                    <input
+                      type="checkbox"
+                      checked={allPageSelected}
+                      ref={(element) => {
+                        if (element) element.indeterminate = somePageSelected && !allPageSelected;
+                      }}
+                      onChange={toggleSelectAll}
+                      disabled={jobs.length === 0}
+                      aria-label="Select all leads on this page"
+                      title="Select all"
+                    />
+                    <span>SR</span>
+                  </label>
+                </th>
+                <th className="py-3 px-3" title="Date this lead was created in the CRM">CRM CREATED</th>
+                <th className="py-3 px-3">LEAD</th>
+                <th className="py-3 px-3">COMPANY</th>
+                <th className="py-3 px-3" title="Campaign and agent">CAMPAIGN</th>
+                <th className="py-3 px-3">CRM / AI QA</th>
+                <th className="py-3 px-2 text-right">ACTIONS</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/20 bg-slate-950/20 text-slate-300">
@@ -306,11 +566,13 @@ export default function QueueView({
                   <td colSpan={7} className="py-4">
                     <EmptyState
                       icon={<Layers className="w-8 h-8 text-slate-500" />}
-                      title={`No leads in ${selectedTab === 'active' ? 'Active Queue' : selectedTab === 'failed' ? 'Failed Jobs' : 'Completed History'}`}
+                      title={`No leads in ${selectedTab === 'active' ? 'Active Queue' : selectedTab === 'failed' ? 'Failed Jobs' : selectedTab === 'skipped' ? 'Skipped' : 'Completed History'}`}
                       description={
                         selectedTab === 'active'
                           ? 'New leads requiring quality review will appear here automatically upon CRM sync.'
-                          : 'No records match your selected filters.'
+                          : selectedTab === 'skipped'
+                            ? 'Use Skip on a waiting lead to move it here without processing it.'
+                            : 'No records match your selected filters.'
                       }
                     />
                   </td>
@@ -319,18 +581,23 @@ export default function QueueView({
                 jobs.map((job, index) => {
                   const srNo = (pagination.page - 1) * pagination.limit + index + 1;
                   const lead = job.lead;
-                  const rawQaStatus = (lead?.qaStatusCrm || job.qaStatus || 'Pending QA').toString().trim();
-                  const effectiveQa = job.manualOverrideStatus || job.qaStatus || rawQaStatus;
+                  const crmQa = (lead?.qaStatusCrm || 'Pending QA').toString().trim();
+                  const aiQa = (job.manualOverrideStatus || job.qaStatus || 'Not scored').toString().trim();
+                  const qualityScore = typeof job.qaResultJson?.overallScore === 'number' ? job.qaResultJson.overallScore : null;
 
-                  const createdDateObj = new Date(lead?.createdAt || lead?.syncedAt || job.createdAt);
-                  const formattedDate = createdDateObj.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
-                  const formattedTime = createdDateObj.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+                  const createdDateObj = crmCreatedDate(lead?.createdAt);
+                  const formattedDate = Number.isNaN(createdDateObj.getTime())
+                    ? '—'
+                    : createdDateObj.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' });
+                  const formattedTime = Number.isNaN(createdDateObj.getTime())
+                    ? ''
+                    : `${createdDateObj.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'UTC' })} UTC`;
 
                   return (
                     <tr key={job.id} className="hover:bg-indigo-500/10 transition-all">
                       {/* SR NO. */}
-                      <td className="px-3 py-2 text-center font-bold text-slate-400 font-mono align-middle">
-                        <label className="inline-flex items-center gap-2">
+                      <td className="px-2 py-2 text-center font-bold text-slate-400 font-mono align-middle">
+                        <label className="inline-flex items-center gap-1.5">
                           <input
                             type="checkbox"
                             checked={selectedIds.includes(job.id)}
@@ -362,6 +629,7 @@ export default function QueueView({
                         <div className="truncate text-[11px] text-slate-500">
                           {lead?.phone || lead?.leadRef || 'No phone'}
                         </div>
+                        {selectedTab === 'completed' && <ProcessSequence job={job} />}
                       </td>
 
                       {/* COMPANY */}
@@ -384,21 +652,37 @@ export default function QueueView({
                           {lead?.agentName || 'Unassigned'}
                         </div>
                         {job.stepError && (
-                          <div className="mt-0.5 max-w-[220px] truncate text-[11px] text-amber-300" title={job.stepError}>{job.stepError}</div>
+                          <div className="mt-0.5 truncate text-[11px] text-amber-300" title={job.stepError}>{job.stepError}</div>
                         )}
                       </td>
 
-                      {/* QUALITY BADGE */}
-                      <td className="whitespace-nowrap px-3 py-2 align-middle">
-                        <StatusBadge status={effectiveQa} size="sm" />
+                      {/* CRM STATUS, AI STATUS, AND CALL QUALITY */}
+                      <td className="px-3 py-2 align-middle">
+                        <div className="space-y-1 overflow-hidden">
+                          <div className="flex min-w-0 items-center gap-1.5">
+                            <span className="w-7 shrink-0 text-[10px] font-bold uppercase text-slate-500">CRM</span>
+                            <StatusBadge status={crmQa} size="sm" />
+                          </div>
+                          <div className="flex min-w-0 items-center gap-1.5">
+                            <span className="w-7 shrink-0 text-[10px] font-bold uppercase text-slate-500">AI</span>
+                            <StatusBadge status={aiQa} customLabel={aiQa === 'Not scored' ? 'Not scored' : undefined} size="sm" />
+                          </div>
+                          <div className="font-mono text-[11px] font-bold text-slate-200">
+                            {qualityScore === null ? 'Quality —' : `Quality ${qualityScore}%`}
+                          </div>
+                        </div>
                       </td>
 
                       {/* ACTIONS */}
-                      <td className="whitespace-nowrap px-3 py-2 text-right align-middle">
+                      <td className="px-2 py-2 text-right align-middle">
                         <RowActions
                           job={job}
                           reviewLabel="Preview"
                           showCompletedActions={selectedTab === 'completed'}
+                          allowSkip={selectedTab === 'active' || selectedTab === 'failed'}
+                          allowRestore={selectedTab === 'skipped'}
+                          onMoved={onMoved}
+                          onDeleted={onDeleted}
                           onSelect={onSelectJob}
                           onRetry={onRetryJob}
                           onFinished={onJobFinished}

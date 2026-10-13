@@ -22,6 +22,7 @@ import {
   Check,
 } from 'lucide-react';
 import { ClientConfig, CampaignConfig, ClientPromptVersion } from '../../lib/types';
+import { usePopup } from './ui/Popup';
 
 interface ClientsViewProps {
   clients: ClientConfig[];
@@ -30,6 +31,7 @@ interface ClientsViewProps {
 }
 
 export default function ClientsView({ clients, onRefresh, onSyncCrm }: ClientsViewProps) {
+  const popup = usePopup();
   // Create / Edit Client State
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingClient, setEditingClient] = useState<Partial<ClientConfig> | null>(null);
@@ -124,10 +126,10 @@ export default function ClientsView({ clients, onRefresh, onSyncCrm }: ClientsVi
           setSuccessClientCode(cleanCode);
         }
       } else {
-        alert(`Error saving client: ${data.error}`);
+        await popup.message({ title: 'Could not save client', message: data.error || 'The client could not be saved.', tone: 'warning' });
       }
     } catch (err: any) {
-      alert(`Error saving client: ${err.message}`);
+      await popup.message({ title: 'Could not save client', message: err.message, tone: 'warning' });
     } finally {
       setIsSubmitting(false);
     }
@@ -150,12 +152,12 @@ export default function ClientsView({ clients, onRefresh, onSyncCrm }: ClientsVi
       if (data.success) {
         setSelectedClient(data.client);
         onRefresh();
-        alert(`Prompt updated successfully! Created Prompt Version v${data.client.promptVersion || 1}.`);
+        await popup.message({ title: 'Prompt saved', message: `Created prompt version v${data.client.promptVersion || 1}.`, tone: 'success' });
       } else {
-        alert(`Error updating prompt: ${data.error}`);
+        await popup.message({ title: 'Could not update prompt', message: data.error || 'The prompt could not be saved.', tone: 'warning' });
       }
     } catch (e: any) {
-      alert(`Error updating prompt: ${e.message}`);
+      await popup.message({ title: 'Could not update prompt', message: e.message, tone: 'warning' });
     } finally {
       setIsSavingPrompt(false);
     }
@@ -179,10 +181,10 @@ export default function ClientsView({ clients, onRefresh, onSyncCrm }: ClientsVi
         setTestEffectivePrompt(data.effectivePrompt);
         setTestPreviewOutput(data.previewOutput);
       } else {
-        alert(`Test Prompt Error: ${data.error}`);
+        await popup.message({ title: 'Prompt test failed', message: data.error || 'The prompt could not be tested.', tone: 'warning' });
       }
     } catch (err: any) {
-      alert(`Test Prompt Error: ${err.message}`);
+      await popup.message({ title: 'Prompt test failed', message: err.message, tone: 'warning' });
     } finally {
       setIsTestingPrompt(false);
     }
@@ -195,12 +197,12 @@ export default function ClientsView({ clients, onRefresh, onSyncCrm }: ClientsVi
       const data = await res.json();
       if (data.success) {
         onRefresh();
-        alert(`CRM Lead Synchronization complete! Fetched matching leads for client ${clientCode}.`);
+        await popup.message({ title: 'CRM sync complete', message: `Fetched matching leads for client ${clientCode}.`, tone: 'success' });
       } else {
-        alert(`Sync Error: ${data.error}`);
+        await popup.message({ title: 'Sync failed', message: data.error || 'The CRM sync did not finish.', tone: 'warning' });
       }
     } catch (e: any) {
-      alert(`Sync Error: ${e.message}`);
+      await popup.message({ title: 'Sync failed', message: e.message, tone: 'warning' });
     } finally {
       setIsSyncingClient(false);
     }
@@ -211,28 +213,41 @@ export default function ClientsView({ clients, onRefresh, onSyncCrm }: ClientsVi
     const campaignNote = campaignCount
       ? ` Its ${campaignCount} campaign${campaignCount === 1 ? '' : 's'} will be removed too.`
       : '';
-    if (!confirm(`Delete client ${client.name} (${client.code})?${campaignNote} Leads already in the queue stay.`)) return;
+    const accepted = await popup.confirm({
+      title: 'Delete client',
+      message: `Delete client ${client.name} (${client.code})?${campaignNote} Leads already in the queue stay.`,
+      confirmLabel: 'Delete',
+      tone: 'danger',
+    });
+    if (!accepted) return;
     try {
       const res = await fetch(`/api/clients?code=${encodeURIComponent(client.code)}`, { method: 'DELETE' });
       const data = await res.json();
       if (!res.ok || !data.success) {
-        alert(data.error || 'Could not delete this client.');
+        await popup.message({ title: 'Could not delete client', message: data.error || 'Could not delete this client.', tone: 'warning' });
         return;
       }
       if (selectedClient?.code === client.code) setSelectedClient(null);
       onRefresh();
+      await popup.message({ title: 'Client deleted', message: `${client.name} has been deleted.`, tone: 'success' });
     } catch (e: any) {
-      alert(`Could not delete this client: ${e.message}`);
+      await popup.message({ title: 'Could not delete client', message: e.message, tone: 'warning' });
     }
   };
 
   const handleDeleteCampaign = async (campaignCode: string, campaignName: string) => {
-    if (!confirm(`Delete campaign ${campaignName} (${campaignCode})? Leads already in the queue stay.`)) return;
+    const accepted = await popup.confirm({
+      title: 'Delete campaign',
+      message: `Delete campaign ${campaignName} (${campaignCode})? Leads already in the queue stay.`,
+      confirmLabel: 'Delete',
+      tone: 'danger',
+    });
+    if (!accepted) return;
     try {
       const res = await fetch(`/api/campaigns?code=${encodeURIComponent(campaignCode)}`, { method: 'DELETE' });
       const data = await res.json();
       if (!res.ok || !data.success) {
-        alert(data.error || 'Could not delete this campaign.');
+        await popup.message({ title: 'Could not delete campaign', message: data.error || 'Could not delete this campaign.', tone: 'warning' });
         return;
       }
       setSelectedClient((current) =>
@@ -241,8 +256,9 @@ export default function ClientsView({ clients, onRefresh, onSyncCrm }: ClientsVi
           : current
       );
       onRefresh();
+      await popup.message({ title: 'Campaign deleted', message: `${campaignName} has been deleted.`, tone: 'success' });
     } catch (e: any) {
-      alert(`Could not delete this campaign: ${e.message}`);
+      await popup.message({ title: 'Could not delete campaign', message: e.message, tone: 'warning' });
     }
   };
 
@@ -261,7 +277,7 @@ export default function ClientsView({ clients, onRefresh, onSyncCrm }: ClientsVi
         onRefresh();
       }
     } catch (e: any) {
-      alert(`Error toggling client status: ${e.message}`);
+      await popup.message({ title: 'Could not update client', message: e.message, tone: 'warning' });
     }
   };
 

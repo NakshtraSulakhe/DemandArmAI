@@ -55,6 +55,9 @@ export default function StatusBadge({
   } else if (norm.includes('stopped') || norm.includes('paused') || norm.includes('lock')) {
     variant = 'stopped';
     if (!customLabel) label = 'Stopped';
+  } else if (norm.includes('skip')) {
+    variant = 'stopped';
+    if (!customLabel) label = 'Skipped';
   } else if (norm.includes('configured')) {
     variant = 'configured';
     if (!customLabel) label = 'Configured';

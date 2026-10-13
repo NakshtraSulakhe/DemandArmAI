@@ -1,4 +1,4 @@
-import { dbStore } from '../db/store';
+import { dbStore, isPendingCrmQa } from '../db/store';
 import { speechService } from '../stt/speechService';
 import { geminiService } from '../ai/geminiService';
 import { qaEngine } from '../qa/qaEngine';
@@ -33,15 +33,14 @@ export class JobWorker {
       const settings = dbStore.getSettings();
       const concurrency = Math.min(8, Math.max(1, settings.maxConcurrency || 1));
       const batchSize = maxBatch ?? Math.max(concurrency * 2, 6);
+      const inFlight = new Set(['AUDIO_RETRIEVED', 'TRANSCRIBING', 'AI_EDITING', 'QA_EVALUATING']);
       const pendingJobs = dbStore
         .getJobs()
-        .filter((j) =>
-          j.status === 'PENDING' ||
-          j.status === 'AUDIO_RETRIEVED' ||
-          j.status === 'TRANSCRIBING' ||
-          j.status === 'AI_EDITING' ||
-          j.status === 'QA_EVALUATING'
-        )
+        .filter((j) => {
+          if (inFlight.has(j.status)) return true;
+          if (j.status !== 'PENDING') return false;
+          return isPendingCrmQa(j.lead);
+        })
         .slice(0, batchSize);
 
       let cursor = 0;
@@ -100,6 +99,10 @@ export class JobWorker {
     let job = dbStore.getJobById(jobId);
     if (!job) {
       throw new Error(`Job not found: ${jobId}`);
+    }
+
+    if (job.status === 'SKIPPED') {
+      throw new Error('This lead is in Skipped. Return it to the queue before processing it.');
     }
 
     const lead = job.lead || dbStore.getLeadByRef(job.leadRef);
@@ -256,6 +259,10 @@ export class JobWorker {
       throw new Error(`Job not found: ${jobId}`);
     }
 
+    if (job.status === 'SKIPPED') {
+      throw new Error('This lead is in Skipped. Return it to the queue before processing it.');
+    }
+
     if (!job.rawTranscript) {
       job.status = 'PENDING';
     } else if (!job.editedTranscript) {
@@ -282,12 +289,69 @@ export class JobWorker {
       throw new Error(`Job not found: ${jobId}`);
     }
 
+    if (job.status === 'SKIPPED') {
+      throw new Error('This lead is in Skipped. Return it to the queue before processing it.');
+    }
+
     job.status = 'PENDING';
     job.stepError = undefined;
     dbStore.saveJob(job);
     dbStore.addAuditLog(job.id, 'JOB_RESTART', 'Manual restart from the recording.');
 
     return this.processSingleJob(job.id);
+  }
+
+  /**
+   * Moves a waiting or failed lead out of the pipeline without calling a provider.
+   */
+  public async skipJob(jobId: string): Promise<ProcessingJobItem> {
+    const job = dbStore.getJobById(jobId);
+    if (!job) {
+      throw new Error(`Job not found: ${jobId}`);
+    }
+
+    if (job.status === 'COMPLETED') {
+      throw new Error('A finished lead stays in Completed History.');
+    }
+
+    if (['AUDIO_RETRIEVED', 'TRANSCRIBING', 'AI_EDITING', 'QA_EVALUATING'].includes(job.status)) {
+      throw new Error('This lead is already running. Wait until it finishes before skipping it.');
+    }
+
+    job.status = 'SKIPPED';
+    job.stepError = undefined;
+    dbStore.saveJob(job);
+    dbStore.addAuditLog(job.id, 'JOB_SKIPPED', 'Skipped. This lead will not be processed until it is returned to the queue.');
+    return dbStore.getJobById(job.id) || job;
+  }
+
+  /**
+   * Puts a skipped lead back in the queue at the first step that still needs work.
+   */
+  public async restoreSkippedJob(jobId: string): Promise<ProcessingJobItem> {
+    const job = dbStore.getJobById(jobId);
+    if (!job) {
+      throw new Error(`Job not found: ${jobId}`);
+    }
+
+    if (job.status !== 'SKIPPED') {
+      throw new Error('This lead is not in Skipped.');
+    }
+
+    if (!job.rawTranscript) {
+      job.status = 'PENDING';
+    } else if (!job.editedTranscript) {
+      job.status = 'AI_EDITING';
+    } else if (!job.qaResultJson) {
+      job.status = 'QA_EVALUATING';
+    } else {
+      job.status = 'PENDING';
+    }
+
+    job.stepError = undefined;
+    dbStore.saveJob(job);
+    dbStore.addAuditLog(job.id, 'JOB_RESTORED', `Returned to the queue at ${job.status}.`);
+    return dbStore.getJobById(job.id) || job;
   }
 }
 

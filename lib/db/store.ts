@@ -21,6 +21,7 @@ interface LocalStoreData {
   jobs: ProcessingJobItem[];
   auditLogs: AuditLogItem[];
   clientPrompts?: ClientPromptVersion[];
+  dismissedLeadRefs?: string[];
   settings: SystemSettingsConfig;
 }
 
@@ -76,22 +77,57 @@ export function qaCategory(status: string | undefined | null): 'QUALIFIED' | 'NE
   return 'PENDING';
 }
 
+export function isPendingCrmQa(lead?: { qaStatusCrm?: string; rawLeadData?: Record<string, any> } | null): boolean {
+  const rawStatus = (
+    lead?.qaStatusCrm ||
+    lead?.rawLeadData?.qa_status ||
+    lead?.rawLeadData?.quality_status ||
+    ''
+  ).toString().trim().toLowerCase();
+  return rawStatus.includes('pending');
+}
+
 function effectiveQaLabel(job: { manualOverrideStatus?: string; qaStatus?: string; lead?: { qaStatusCrm?: string } }): string {
   return job.manualOverrideStatus || job.qaStatus || job.lead?.qaStatusCrm || '';
 }
 
-function localDateKey(value: string | undefined): string {
+function asUtcDate(value: string): Date {
+  const trimmed = value.trim();
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}/.test(trimmed)) {
+    return new Date(`${trimmed.replace(' ', 'T')}Z`);
+  }
+  return new Date(trimmed);
+}
+
+export function utcDateKey(value: string | undefined): string {
   if (!value) return '';
-  const date = new Date(value);
+  const date = asUtcDate(value);
   if (Number.isNaN(date.getTime())) return value.slice(0, 10);
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  return `${date.getFullYear()}-${month}-${day}`;
+  return date.toISOString().slice(0, 10);
+}
+
+export function currentUtcDay(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+export function matchesDateRange(value: string | undefined, range: string | null | undefined): boolean {
+  if (!range || range === 'ALL') return true;
+  if (!value) return false;
+  const date = asUtcDate(value);
+  if (Number.isNaN(date.getTime())) return false;
+  if (range === 'today') return utcDateKey(value) === currentUtcDay();
+  const days = parseInt(range, 10);
+  if (!days || Number.isNaN(days)) return true;
+  return date.getTime() >= Date.now() - days * 24 * 60 * 60 * 1000;
+}
+
+function localDateKey(value: string | undefined): string {
+  return utcDateKey(value);
 }
 
 function dateFromKey(key: string): Date {
   const [year, month, day] = key.split('-').map(Number);
-  return new Date(year, (month || 1) - 1, day || 1);
+  return new Date(Date.UTC(year, (month || 1) - 1, day || 1));
 }
 
 function safeParseJson<T>(val: any, fallback: T): T {
@@ -152,6 +188,7 @@ export class LocalDbStore {
     jobs: [],
     auditLogs: [],
     clientPrompts: [],
+    dismissedLeadRefs: [],
     settings: DEFAULT_SETTINGS,
   };
 
@@ -182,6 +219,7 @@ export class LocalDbStore {
           this.data = JSON.parse(raw);
         }
       }
+      if (!Array.isArray(this.data.dismissedLeadRefs)) this.data.dismissedLeadRefs = [];
     } catch (e) {
       console.error('Local JSON init fallback error:', e);
     }
@@ -380,6 +418,7 @@ export class LocalDbStore {
         this.data.auditLogs = this.mergeByKey(localAudits, mappedAudits, (log) => log.id);
       }
 
+      this.dropDismissedLeads();
       this.isDbInitialized = true;
       this.persistLocalFile();
     } catch (err) {
@@ -1062,6 +1101,7 @@ export class LocalDbStore {
     });
 
     newLeads.forEach((nl) => {
+      if (this.isLeadDismissed(nl.leadRef)) return;
       const existing = existingLeadsMap.get(nl.leadRef);
       const mergedLead: CrmLeadItem = existing
         ? {
@@ -1076,6 +1116,7 @@ export class LocalDbStore {
     });
 
     newJobs.forEach((nj) => {
+      if (this.isLeadDismissed(nj.leadRef)) return;
       const existingJob = existingJobsMap.get(nj.leadRef);
       if (!existingJob) {
         existingJobsMap.set(nj.leadRef, nj);
@@ -1092,15 +1133,61 @@ export class LocalDbStore {
     this.upsertLeadsAndSyncJobs(newLeads, newJobs);
   }
 
-  public isQueueEligible(lead: CrmLeadItem, job?: ProcessingJobItem): boolean {
-    const rawStatus = (
-      lead.qaStatusCrm ||
-      lead.rawLeadData?.qa_status ||
-      lead.rawLeadData?.quality_status ||
-      ''
-    ).toString().trim().toLowerCase();
+  public isLeadDismissed(leadRef: string): boolean {
+    return (this.data.dismissedLeadRefs || []).includes(leadRef);
+  }
 
-    const isPendingQa = rawStatus.includes('pending');
+  private dropDismissedLeads(): void {
+    const dismissed = new Set(this.data.dismissedLeadRefs || []);
+    if (dismissed.size === 0) return;
+    this.data.leads = this.data.leads.filter((lead) => !dismissed.has(lead.leadRef));
+    this.data.jobs = this.data.jobs.filter((job) => !dismissed.has(job.leadRef));
+  }
+
+  public deleteLeads(ids: string[]): { deleted: string[]; blocked: string[] } {
+    const live = new Set(['AUDIO_RETRIEVED', 'TRANSCRIBING', 'AI_EDITING', 'QA_EVALUATING']);
+    const deleted: string[] = [];
+    const blocked: string[] = [];
+    const targets = new Set<string>();
+
+    for (const id of ids) {
+      const storedId = id.startsWith('stored_') ? id.slice('stored_'.length) : '';
+      const job = this.data.jobs.find((row) => row.id === id);
+      const lead = this.data.leads.find((row) => row.id === id || row.id === storedId || row.leadRef === id);
+      const leadRef = job?.leadRef || lead?.leadRef;
+      if (!leadRef) continue;
+      const liveJob = this.data.jobs.find((row) => row.leadRef === leadRef && live.has(row.status));
+      if (liveJob) {
+        if (!blocked.includes(leadRef)) blocked.push(leadRef);
+        continue;
+      }
+      targets.add(leadRef);
+    }
+
+    if (targets.size === 0) return { deleted, blocked };
+
+    this.data.jobs = this.data.jobs.filter((job) => !targets.has(job.leadRef));
+    this.data.leads = this.data.leads.filter((lead) => !targets.has(lead.leadRef));
+    const dismissed = new Set(this.data.dismissedLeadRefs || []);
+    targets.forEach((leadRef) => {
+      dismissed.add(leadRef);
+      deleted.push(leadRef);
+    });
+    this.data.dismissedLeadRefs = Array.from(dismissed);
+    this.persist();
+    this.removeLeadsFromDb(deleted).catch((error) => console.error('Prisma delete leads error:', error));
+    return { deleted, blocked };
+  }
+
+  private async removeLeadsFromDb(leadRefs: string[]): Promise<void> {
+    if (leadRefs.length === 0) return;
+    await prisma.processingJob.deleteMany({ where: { leadRef: { in: leadRefs } } });
+    await prisma.crmLead.deleteMany({ where: { leadRef: { in: leadRefs } } });
+  }
+
+  public isQueueEligible(lead: CrmLeadItem, job?: ProcessingJobItem): boolean {
+    if (this.isLeadDismissed(lead.leadRef)) return false;
+    const isPendingQa = isPendingCrmQa(lead);
     const hasRecording = !!(lead.recordingUrl || (lead.recordings && lead.recordings.length > 0));
     const isCompleted = job?.status === 'COMPLETED' || !!job?.editedTranscript;
     const isActiveOrQueued = job && ['PENDING', 'QUEUED', 'AUDIO_RETRIEVED', 'TRANSCRIBING', 'AI_EDITING', 'QA_EVALUATING'].includes(job.status);
@@ -1222,16 +1309,27 @@ export class LocalDbStore {
 
   // Analytics Calculation
   public getAnalytics(days?: number, clientCodeFilter?: string, campaignCodeFilter?: string) {
-    const jobs = this.getJobs().filter((j) => {
+    const scopedJobs = this.getJobs().filter((j) => {
       if (clientCodeFilter && clientCodeFilter !== 'ALL') {
         if (j.lead?.clientCode.trim().toUpperCase() !== clientCodeFilter.trim().toUpperCase()) return false;
       }
       if (campaignCodeFilter && campaignCodeFilter !== 'ALL') {
         if (j.lead?.campaignCode.trim().toUpperCase() !== campaignCodeFilter.trim().toUpperCase()) return false;
       }
-      if (days && days > 0) {
+      return true;
+    });
+
+    const todayStr = currentUtcDay();
+    const yesterdayAnchor = new Date();
+    const yesterdayStr = new Date(Date.UTC(yesterdayAnchor.getUTCFullYear(), yesterdayAnchor.getUTCMonth(), yesterdayAnchor.getUTCDate() - 1)).toISOString().slice(0, 10);
+    const todayLeadsCount = scopedJobs.filter((j) => utcDateKey(j.createdAt) === todayStr).length;
+    const yesterdayLeadsCount = scopedJobs.filter((j) => utcDateKey(j.createdAt) === yesterdayStr).length;
+
+    const jobs = scopedJobs.filter((j) => {
+      if (days === 1) return utcDateKey(j.createdAt) === todayStr;
+      if (days && days > 1) {
         const cutoff = Date.now() - days * 86400000;
-        if (new Date(j.createdAt).getTime() < cutoff) return false;
+        return new Date(j.createdAt).getTime() >= cutoff;
       }
       return true;
     });
@@ -1257,14 +1355,9 @@ export class LocalDbStore {
     let threeTo5Min = 0;
     let over5Min = 0;
 
-    const todayStr = localDateKey(new Date().toISOString());
-    const yesterdayDate = new Date(Date.now() - 86400000);
-    const yesterdayStr = yesterdayDate.toISOString().slice(0, 10);
     const sevenDaysAgoCutoff = Date.now() - 7 * 86400000;
     const fourteenDaysAgoCutoff = Date.now() - 14 * 86400000;
 
-    let todayLeadsCount = 0;
-    let yesterdayLeadsCount = 0;
     let thisWeekLeadsCount = 0;
     let lastWeekLeadsCount = 0;
     let leadsWithTokenUsage = 0;
@@ -1292,9 +1385,6 @@ export class LocalDbStore {
       else if (duration > 0) under1Min++;
 
       const createdAtMs = new Date(j.createdAt).getTime();
-      const jobDateStr = localDateKey(j.createdAt);
-      if (jobDateStr === todayStr) todayLeadsCount++;
-      if (jobDateStr === yesterdayStr) yesterdayLeadsCount++;
       if (createdAtMs >= sevenDaysAgoCutoff) thisWeekLeadsCount++;
       else if (createdAtMs >= fourteenDaysAgoCutoff) lastWeekLeadsCount++;
     });
@@ -1387,7 +1477,7 @@ export class LocalDbStore {
 
     const dailyLeadVelocity = sortedDates.map((d) => {
       const dt = dateFromKey(d);
-      const dayName = Number.isNaN(dt.getTime()) ? 'Day' : dayNames[dt.getDay()];
+      const dayName = Number.isNaN(dt.getTime()) ? 'Day' : dayNames[dt.getUTCDay()];
       const sttMins = dateMap[d].durationSeconds / 60;
       const daySttCost = sttMins * sttRate;
       const dayGeminiCost = (dateMap[d].pTokens / 1_000_000) * geminiInRate + (dateMap[d].cTokens / 1_000_000) * geminiOutRate;
@@ -1408,13 +1498,13 @@ export class LocalDbStore {
     sortedDates.forEach((d) => {
       const dt = dateFromKey(d);
       if (Number.isNaN(dt.getTime())) return;
-      const dayOfWeek = dt.getDay();
+      const dayOfWeek = dt.getUTCDay();
       const sunday = new Date(dt);
-      sunday.setDate(dt.getDate() - dayOfWeek);
-      const sundayStr = localDateKey(sunday.toISOString());
+      sunday.setUTCDate(dt.getUTCDate() - dayOfWeek);
+      const sundayStr = sunday.toISOString().slice(0, 10);
       const saturday = new Date(sunday);
-      saturday.setDate(sunday.getDate() + 6);
-      const saturdayStr = localDateKey(saturday.toISOString());
+      saturday.setUTCDate(sunday.getUTCDate() + 6);
+      const saturdayStr = saturday.toISOString().slice(0, 10);
 
       const weekKey = `Week (${sundayStr.slice(5)} - ${saturdayStr.slice(5)})`;
       if (!weekMap[weekKey]) {

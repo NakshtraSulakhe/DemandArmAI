@@ -33,6 +33,8 @@ export default function AnalyticsView({ clients, campaigns }: AnalyticsViewProps
   const [selectedCampaignCode, setSelectedCampaignCode] = useState<string>('ALL');
   const [analytics, setAnalytics] = useState<AnalyticsSummary | null>(null);
   const [leadTokenQuery, setLeadTokenQuery] = useState('');
+  const [leadClientFilter, setLeadClientFilter] = useState('ALL');
+  const [leadCampaignFilter, setLeadCampaignFilter] = useState('ALL');
   const [isLoading, setIsLoading] = useState(true);
 
   const fetchAnalytics = async () => {
@@ -86,7 +88,7 @@ export default function AnalyticsView({ clients, campaigns }: AnalyticsViewProps
                 daysFilter === 1 ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-slate-200'
               }`}
             >
-              Today
+              Today (UTC)
             </button>
             <button
               onClick={() => setDaysFilter(7)}
@@ -254,13 +256,37 @@ export default function AnalyticsView({ clients, campaigns }: AnalyticsViewProps
             Each lead
             <span className="ml-2 font-mono normal-case tracking-normal text-slate-500">1 USD = ₹{(analytics.usdToInrRate || 0).toFixed(2)}</span>
           </h5>
-          <input
-            type="text"
-            value={leadTokenQuery}
-            onChange={(event) => setLeadTokenQuery(event.target.value)}
-            placeholder="Search a lead, company, or id"
-            className="w-full max-w-xs bg-slate-950/60 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-200 placeholder:text-slate-500 focus:outline-none focus:border-indigo-400"
-          />
+          <div className="flex flex-wrap items-center gap-2">
+            <input
+              type="text"
+              value={leadTokenQuery}
+              onChange={(event) => setLeadTokenQuery(event.target.value)}
+              placeholder="Search a lead, company, or id"
+              className="w-full max-w-xs bg-slate-950/60 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-200 placeholder:text-slate-500 focus:outline-none focus:border-indigo-400"
+            />
+            <select
+              value={leadClientFilter}
+              onChange={(event) => setLeadClientFilter(event.target.value)}
+              className="bg-slate-950/60 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-200 focus:outline-none"
+              aria-label="Lead client"
+            >
+              <option value="ALL">All clients in this table</option>
+              {[...new Set((analytics.leadTokenUsage || []).map((lead) => lead.clientCode).filter(Boolean))].sort().map((code) => (
+                <option key={code} value={code}>{code}</option>
+              ))}
+            </select>
+            <select
+              value={leadCampaignFilter}
+              onChange={(event) => setLeadCampaignFilter(event.target.value)}
+              className="bg-slate-950/60 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-200 focus:outline-none"
+              aria-label="Lead campaign"
+            >
+              <option value="ALL">All campaigns in this table</option>
+              {[...new Set((analytics.leadTokenUsage || []).map((lead) => lead.campaignName).filter(Boolean))].sort().map((name) => (
+                <option key={name} value={name}>{name}</option>
+              ))}
+            </select>
+          </div>
         </div>
 
         <div className="overflow-x-auto rounded-xl border border-slate-800">
@@ -280,6 +306,8 @@ export default function AnalyticsView({ clients, campaigns }: AnalyticsViewProps
             <tbody className="divide-y divide-slate-800/60">
               {(analytics.leadTokenUsage || [])
                 .filter((lead) => {
+                  if (leadClientFilter !== 'ALL' && lead.clientCode !== leadClientFilter) return false;
+                  if (leadCampaignFilter !== 'ALL' && lead.campaignName !== leadCampaignFilter) return false;
                   const query = leadTokenQuery.trim().toLowerCase();
                   if (!query) return true;
                   return [lead.contactName, lead.companyName, lead.leadRef, lead.campaignName, lead.clientCode]
@@ -310,12 +338,14 @@ export default function AnalyticsView({ clients, campaigns }: AnalyticsViewProps
                   </tr>
                 ))}
               {(analytics.leadTokenUsage || []).filter((lead) => {
+                if (leadClientFilter !== 'ALL' && lead.clientCode !== leadClientFilter) return false;
+                if (leadCampaignFilter !== 'ALL' && lead.campaignName !== leadCampaignFilter) return false;
                 const query = leadTokenQuery.trim().toLowerCase();
                 if (!query) return true;
                 return [lead.contactName, lead.companyName, lead.leadRef, lead.campaignName, lead.clientCode].join(' ').toLowerCase().includes(query);
               }).length === 0 && (
                 <tr>
-                  <td colSpan={8} className="px-3 py-6 text-center text-slate-500">No lead in this view has recorded token usage.</td>
+                  <td colSpan={8} className="px-3 py-6 text-center text-slate-500">No lead in this view matches these filters.</td>
                 </tr>
               )}
             </tbody>
