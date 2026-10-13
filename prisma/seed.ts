@@ -13,6 +13,8 @@ async function main() {
       id: 'global',
       crmEndpoint: '',
       crmApiKey: '',
+      sttApiKey: "",
+      assemblyAiApiKey: "",
       webhookSecret: '',
       crmWritebackUrl: '',
       isProcessingPaused: false,
