@@ -161,7 +161,8 @@ export async function GET(req: Request) {
     };
 
     const directoryJobs = paginatedLeads.map((lead) => {
-      const { job, rawLeadData, processingStatus, transcriptStatus, preEditScore, postEditScore, aiQaStatus, ...storedLead } = lead;
+      // const { job, rawLeadData, processingStatus, transcriptStatus, preEditScore, postEditScore, aiQaStatus, ...storedLead } = lead;
+      const { job, processingStatus, transcriptStatus, preEditScore, postEditScore, aiQaStatus, ...storedLead } = lead;
       if (job) {
         return { ...job, lead: storedLead };
       }
