@@ -33,12 +33,23 @@ import { ProcessingJobItem, CrmRecordingItem } from '../../lib/types';
 import CallAudioPlayer from './ui/CallAudioPlayer';
 import { coachingFromScore } from '../../lib/qa/agentCoaching';
 
-function highlightEntities(text: string, terms: string[]) {
-  const escaped = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+function escapeRegex(str: string): string {
+  return str.split('').map((c) => ('.*+?^${}()|[]\\'.includes(c) ? '\\' + c : c)).join('');
+}
+
+function highlightEntities(text: string, terms: string[], alertTerms: string[] = []) {
+  let escaped = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   const unique = [...new Set(terms.map((term) => term.trim()).filter((term) => term.length > 2))];
-  if (!unique.length) return escaped;
-  const pattern = new RegExp(`(${unique.map((term) => term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})`, 'gi');
-  return escaped.replace(pattern, '<mark class="rounded bg-indigo-500/25 px-0.5 text-indigo-100">$1</mark>');
+  if (unique.length) {
+    const pattern = new RegExp('(' + unique.map(escapeRegex).join('|') + ')', 'gi');
+    escaped = escaped.replace(pattern, '<mark class="rounded bg-indigo-500/25 px-0.5 text-indigo-100">$1</mark>');
+  }
+  const uniqueAlerts = [...new Set(alertTerms.map((t) => t.trim()).filter((t) => t.length > 1))];
+  if (uniqueAlerts.length) {
+    const alertPattern = new RegExp('(' + uniqueAlerts.map(escapeRegex).join('|') + ')', 'gi');
+    escaped = escaped.replace(alertPattern, '<mark class="rounded bg-rose-500/30 px-1 py-0.5 text-rose-200 font-bold border border-rose-500/50" title="Campaign Asset Mismatch">$1 ⚠️</mark>');
+  }
+  return escaped;
 }
 
 interface LeadDetailModalProps {
@@ -78,18 +89,10 @@ export default function LeadDetailModal({
   const [copiedTranscript, setCopiedTranscript] = useState(false);
   const [copiedFeedback, setCopiedFeedback] = useState(false);
   const [selectedRecIdx, setSelectedRecIdx] = useState(0);
-  const [stretched, setStretched] = useState(false);
-
-  React.useEffect(() => {
-    setStretched(localStorage.getItem('qa-preview-stretched') === '1');
-  }, []);
+  const [stretched, setStretched] = useState(true);
 
   const toggleStretch = () => {
-    setStretched((current) => {
-      const next = !current;
-      localStorage.setItem('qa-preview-stretched', next ? '1' : '0');
-      return next;
-    });
+    setStretched((current) => !current);
   };
 
   // Sync state when job changes
@@ -101,6 +104,7 @@ export default function LeadDetailModal({
       setSelectedRecIdx(0);
       setIsEditingTranscript(false);
       setActiveTab('qa');
+      setStretched(true);
     }
   }, [job]);
 
@@ -263,7 +267,7 @@ export default function LeadDetailModal({
               type="button"
               onClick={toggleStretch}
               className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition-all"
-              title={stretched ? 'Restore the preview size' : 'Stretch the preview window'}
+              title={stretched ? 'Restore normal view' : 'Stretch the preview window'}
             >
               {stretched ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
               <span>{stretched ? 'Restore' : 'Stretch'}</span>
@@ -383,11 +387,15 @@ export default function LeadDetailModal({
           >
             <ShieldCheck className="w-4 h-4 text-emerald-400" />
             Verified Transcript (CRM Cross-Check)
-            {job.verificationResult?.hasCorrections && (
+            {job.verificationResult?.hasAssetMismatch ? (
+              <span className="rounded-full bg-rose-500/20 px-1.5 py-0.5 text-[10px] font-bold text-rose-300 border border-rose-500/30">
+                ⚠️ Asset Mismatch
+              </span>
+            ) : job.verificationResult?.hasCorrections ? (
               <span className="rounded-full bg-emerald-500/20 px-1.5 py-0.5 text-[10px] font-bold text-emerald-300">
                 {job.verificationResult.corrections.length} corrected
               </span>
-            )}
+            ) : null}
           </button>
 
           <button
@@ -696,13 +704,17 @@ export default function LeadDetailModal({
                     <h3 className="text-xs font-bold uppercase tracking-wider text-slate-300">
                       Layer 3: CRM Verified & Spell-Corrected Transcript
                     </h3>
-                    {job.verificationResult?.hasCorrections ? (
+                    {job.verificationResult?.hasAssetMismatch ? (
+                      <span className="rounded-full border border-rose-500/40 bg-rose-500/20 px-2 py-0.5 text-[10px] font-bold text-rose-200">
+                        ⚠️ Asset Title Mismatch
+                      </span>
+                    ) : job.verificationResult?.hasCorrections ? (
                       <span className="rounded-full border border-emerald-500/30 bg-emerald-500/15 px-2 py-0.5 text-[10px] font-bold text-emerald-300">
                         ✓ {job.verificationResult.corrections.length} Discrepancy Corrected
                       </span>
                     ) : job.verifiedTranscript ? (
                       <span className="rounded-full border border-sky-500/30 bg-sky-500/15 px-2 py-0.5 text-[10px] font-bold text-sky-300">
-                        ✓ Aligned with CRM Details
+                        ✓ Aligned with CRM Details & Asset
                       </span>
                     ) : (
                       <span className="rounded-full border border-amber-500/30 bg-amber-500/15 px-2 py-0.5 text-[10px] font-bold text-amber-300">
@@ -735,8 +747,42 @@ export default function LeadDetailModal({
                 </div>
               </div>
 
-              {/* Lead Details Cross-Check Status Grid */}
-              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+              {/* High-Visibility Asset Mismatch Warning Banner */}
+              {job.verificationResult?.hasAssetMismatch && (
+                <div className="rounded-xl border border-rose-500/40 bg-rose-500/10 p-4">
+                  <div className="flex items-start gap-3">
+                    <AlertTriangle className="h-5 w-5 shrink-0 text-rose-400 mt-0.5" />
+                    <div>
+                      <h4 className="text-xs font-bold uppercase tracking-wider text-rose-300">
+                        Campaign Asset Mismatch Detected
+                      </h4>
+                      <p className="mt-1 text-xs leading-relaxed text-slate-200">
+                        This lead is registered for the{' '}
+                        <strong className="text-white underline">
+                          {job.campaign?.name || job.lead?.campaignName || 'Campaign'} ({job.campaign?.code || job.lead?.campaignCode})
+                        </strong>{' '}
+                        campaign with expected asset{' '}
+                        <strong className="text-emerald-300">
+                          &ldquo;{job.campaign?.assetTitle || job.verificationResult?.detectedLeadDetails?.expectedAssetTitle || 'Expected Asset'}&rdquo;
+                        </strong>
+                        , but in the call transcript the agent or prospect pitched/mentioned{' '}
+                        <strong className="text-rose-300 underline">
+                          &ldquo;{job.verificationResult?.detectedLeadDetails?.detectedAssetTitle || 'a different asset (e.g. LMS / ATS)'}&rdquo;
+                        </strong>
+                        .
+                      </p>
+                      {job.verificationResult?.detectedLeadDetails?.assetNotes && (
+                        <p className="mt-1.5 text-[11px] italic text-rose-200/90">
+                          Auditor Note: {job.verificationResult.detectedLeadDetails.assetNotes}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Lead Details & Campaign Asset Cross-Check Grid (5 columns) */}
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
                 <div className="rounded-xl border border-white/10 bg-[rgba(10,15,29,0.55)] p-3">
                   <div className="text-[10px] font-bold uppercase text-slate-400">Contact Name</div>
                   <div className="mt-1 truncate text-xs font-semibold text-slate-100" title={job.lead?.contactName}>
@@ -784,6 +830,39 @@ export default function LeadDetailModal({
                       : 'Verified in CRM'}
                   </div>
                 </div>
+
+                {/* 5th Column: Campaign Asset Title */}
+                <div className={`rounded-xl border p-3 ${
+                  job.verificationResult?.hasAssetMismatch || job.verificationResult?.detectedLeadDetails?.assetStatus === 'MISMATCH'
+                    ? 'border-rose-500/50 bg-rose-950/30'
+                    : 'border-white/10 bg-[rgba(10,15,29,0.55)]'
+                }`}>
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-bold uppercase text-slate-400">Asset Title</span>
+                    {job.verificationResult?.hasAssetMismatch && (
+                      <span className="rounded bg-rose-500/20 px-1 py-0.2 text-[9px] font-black uppercase text-rose-300">
+                        MISMATCH ⚠️
+                      </span>
+                    )}
+                  </div>
+                  <div
+                    className="mt-1 truncate text-xs font-semibold text-slate-100"
+                    title={job.campaign?.assetTitle || job.lead?.campaignName || 'N/A'}
+                  >
+                    {job.campaign?.assetTitle || job.lead?.campaignName || 'N/A'}
+                  </div>
+                  <div className="mt-1 text-[10px]">
+                    {job.verificationResult?.detectedLeadDetails?.assetStatus === 'MISMATCH' ? (
+                      <span className="font-bold text-rose-300 truncate block" title={job.verificationResult.detectedLeadDetails.detectedAssetTitle || ''}>
+                        ⚠️ Pitched: {job.verificationResult.detectedLeadDetails.detectedAssetTitle || 'Different Asset'}
+                      </span>
+                    ) : job.verificationResult?.detectedLeadDetails?.assetStatus === 'MATCH' ? (
+                      <span className="text-emerald-400">✓ Aligned with Asset</span>
+                    ) : (
+                      <span className="text-slate-400">Expected Asset</span>
+                    )}
+                  </div>
+                </div>
               </div>
 
               {/* Table of Spelling Corrections (if any were applied) */}
@@ -818,12 +897,19 @@ export default function LeadDetailModal({
                 <div
                   className="whitespace-pre-wrap leading-relaxed"
                   dangerouslySetInnerHTML={{
-                    __html: highlightEntities(job.verifiedTranscript || job.editedTranscript || 'No verified transcript yet.', [
-                      job.lead?.contactName || '',
-                      job.lead?.companyName || '',
-                      job.lead?.email || '',
-                      job.lead?.jobTitle || '',
-                    ]),
+                    __html: highlightEntities(
+                      job.verifiedTranscript || job.editedTranscript || 'No verified transcript yet.',
+                      [
+                        job.lead?.contactName || '',
+                        job.lead?.companyName || '',
+                        job.lead?.email || '',
+                        job.lead?.jobTitle || '',
+                        job.campaign?.assetTitle || '',
+                      ],
+                      job.verificationResult?.hasAssetMismatch && job.verificationResult?.detectedLeadDetails?.detectedAssetTitle
+                        ? [job.verificationResult.detectedLeadDetails.detectedAssetTitle]
+                        : []
+                    ),
                   }}
                 />
               </div>

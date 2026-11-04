@@ -219,6 +219,14 @@ export class JobWorker {
         job.verifiedTranscript = verifiedOutput.verifiedTranscript;
         job.verificationResult = verifiedOutput.result;
 
+        if (verifiedOutput.result.hasAssetMismatch) {
+          dbStore.addAuditLog(
+            job.id,
+            'ASSET_MISMATCH_ALERT',
+            `Campaign Asset Mismatch: Spoken asset "${verifiedOutput.result.detectedLeadDetails?.detectedAssetTitle || 'Unknown'}" does not match expected "${campaign?.assetTitle || lead.campaignName}".`
+          );
+        }
+
         if (verifiedOutput.result.hasCorrections) {
           const count = verifiedOutput.result.corrections.length;
           const correctionSummary = verifiedOutput.result.corrections

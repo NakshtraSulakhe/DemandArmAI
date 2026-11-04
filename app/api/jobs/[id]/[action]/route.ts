@@ -81,6 +81,14 @@ export async function POST(
         job.verifiedTranscript = verified.verifiedTranscript;
         job.verificationResult = verified.result;
 
+        if (verified.result.hasAssetMismatch) {
+          dbStore.addAuditLog(
+            job.id,
+            'ASSET_MISMATCH_ALERT',
+            `Campaign Asset Mismatch: Spoken asset "${verified.result.detectedLeadDetails?.detectedAssetTitle || 'Unknown'}" does not match expected "${campaign?.assetTitle || lead.campaignName}".`
+          );
+        }
+
         const qaResult = await qaEngine.evaluateLead(
           client,
           campaign,

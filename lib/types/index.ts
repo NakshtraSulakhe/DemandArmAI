@@ -127,15 +127,17 @@ export interface QaResultData {
 
 
 export interface VerificationCorrection {
-  field: 'contactName' | 'firstName' | 'lastName' | 'email' | 'jobTitle' | 'companyName' | 'phone' | 'other';
+  field: 'contactName' | 'firstName' | 'lastName' | 'email' | 'jobTitle' | 'companyName' | 'phone' | 'assetTitle' | 'other';
   originalInTranscript: string;
   correctedTo: string;
   explanation?: string;
+  isMismatch?: boolean;
 }
 
 export interface VerificationResultData {
-  status: 'VERIFIED_MATCH' | 'VERIFIED_WITH_CORRECTIONS' | 'UNVERIFIED_NOT_MENTIONED';
+  status: 'VERIFIED_MATCH' | 'VERIFIED_WITH_CORRECTIONS' | 'UNVERIFIED_NOT_MENTIONED' | 'ASSET_MISMATCH';
   hasCorrections: boolean;
+  hasAssetMismatch?: boolean;
   corrections: VerificationCorrection[];
   verifiedAt: string;
   detectedLeadDetails?: {
@@ -144,6 +146,10 @@ export interface VerificationResultData {
     email?: string | null;
     jobTitle?: string | null;
     phone?: string | null;
+    expectedAssetTitle?: string | null;
+    detectedAssetTitle?: string | null;
+    assetStatus?: 'MATCH' | 'MISMATCH' | 'NOT_MENTIONED';
+    assetNotes?: string | null;
   };
   summary?: string;
 }
