@@ -83,6 +83,8 @@ model ProcessingJob {
   gcsAudioUri          String?    @db.Text
   rawTranscript        String?    @db.LongText
   editedTranscript     String?    @db.LongText
+  verifiedTranscript   String?    @db.LongText
+  verificationResult   String?    @db.LongText
   promptVersionUsed    String?
   qaStatus             String?
   qaResultJson         String?    @db.LongText

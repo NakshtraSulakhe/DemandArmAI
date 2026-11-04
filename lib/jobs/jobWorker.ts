@@ -1,6 +1,7 @@
 import { dbStore, isPendingCrmQa } from '../db/store';
 import { speechService } from '../stt/speechService';
 import { geminiService } from '../ai/geminiService';
+import { transcriptVerifier } from '../ai/transcriptVerifier';
 import { qaEngine } from '../qa/qaEngine';
 import { pushQaResultToCrm } from '../crm/crmWriteback';
 import { ProcessingJobItem } from '../types';
@@ -33,7 +34,7 @@ export class JobWorker {
       const settings = dbStore.getSettings();
       const concurrency = Math.min(8, Math.max(1, settings.maxConcurrency || 1));
       const batchSize = maxBatch ?? Math.max(concurrency * 2, 6);
-      const inFlight = new Set(['AUDIO_RETRIEVED', 'TRANSCRIBING', 'AI_EDITING', 'QA_EVALUATING']);
+      const inFlight = new Set(['AUDIO_RETRIEVED', 'TRANSCRIBING', 'AI_EDITING', 'AI_VERIFYING', 'QA_EVALUATING']);
       const pendingJobs = dbStore
         .getJobs()
         .filter((j) => {
@@ -197,6 +198,46 @@ export class JobWorker {
         job.promptVersionUsed = edited.versionTag;
         job.promptTokens = (job.promptTokens || 0) + edited.promptTokens;
         job.completionTokens = (job.completionTokens || 0) + edited.completionTokens;
+        job.status = 'AI_VERIFYING';
+        dbStore.saveJob(job);
+      }
+
+      if (job.status === 'AI_VERIFYING' || (!job.verifiedTranscript && job.editedTranscript)) {
+        dbStore.addAuditLog(
+          job.id,
+          'STEP_AI_VERIFYING',
+          `Cross-checking transcript against CRM lead details (${lead.contactName || 'Name'}, ${lead.companyName || 'Company'}, ${lead.jobTitle || 'Title'}, ${lead.email || 'Email'}).`
+        );
+
+        const verifiedOutput = await transcriptVerifier.verifyAndCorrectTranscript(
+          client,
+          campaign,
+          lead,
+          job.editedTranscript!
+        );
+
+        job.verifiedTranscript = verifiedOutput.verifiedTranscript;
+        job.verificationResult = verifiedOutput.result;
+
+        if (verifiedOutput.result.hasCorrections) {
+          const count = verifiedOutput.result.corrections.length;
+          const correctionSummary = verifiedOutput.result.corrections
+            .slice(0, 3)
+            .map((c) => `${c.field}: "${c.originalInTranscript}" ➔ "${c.correctedTo}"`)
+            .join('; ');
+          dbStore.addAuditLog(
+            job.id,
+            'TRANSCRIPT_CORRECTED',
+            `Corrected ${count} lead detail spelling(s): ${correctionSummary}`
+          );
+        } else {
+          dbStore.addAuditLog(
+            job.id,
+            'TRANSCRIPT_VERIFIED',
+            'Transcript verified against CRM lead details (no spelling discrepancies found).'
+          );
+        }
+
         job.status = 'QA_EVALUATING';
         dbStore.saveJob(job);
       }
@@ -218,7 +259,7 @@ export class JobWorker {
           campaign,
           lead,
           job.rawTranscript!,
-          job.editedTranscript!
+          job.verifiedTranscript || job.editedTranscript!
         );
 
         job.qaResultJson = qaResult;
@@ -267,6 +308,8 @@ export class JobWorker {
       job.status = 'PENDING';
     } else if (!job.editedTranscript) {
       job.status = 'AI_EDITING';
+    } else if (!job.verifiedTranscript) {
+      job.status = 'AI_VERIFYING';
     } else {
       job.status = 'QA_EVALUATING';
       job.qaResultJson = undefined;
@@ -314,7 +357,7 @@ export class JobWorker {
       throw new Error('A finished lead stays in Completed History.');
     }
 
-    if (['AUDIO_RETRIEVED', 'TRANSCRIBING', 'AI_EDITING', 'QA_EVALUATING'].includes(job.status)) {
+    if (['AUDIO_RETRIEVED', 'TRANSCRIBING', 'AI_EDITING', 'AI_VERIFYING', 'QA_EVALUATING'].includes(job.status)) {
       throw new Error('This lead is already running. Wait until it finishes before skipping it.');
     }
 
@@ -342,6 +385,8 @@ export class JobWorker {
       job.status = 'PENDING';
     } else if (!job.editedTranscript) {
       job.status = 'AI_EDITING';
+    } else if (!job.verifiedTranscript) {
+      job.status = 'AI_VERIFYING';
     } else if (!job.qaResultJson) {
       job.status = 'QA_EVALUATING';
     } else {

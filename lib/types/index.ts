@@ -125,11 +125,34 @@ export interface QaResultData {
   metadata: Record<string, any>;
 }
 
+
+export interface VerificationCorrection {
+  field: 'contactName' | 'firstName' | 'lastName' | 'email' | 'jobTitle' | 'companyName' | 'phone' | 'other';
+  originalInTranscript: string;
+  correctedTo: string;
+  explanation?: string;
+}
+
+export interface VerificationResultData {
+  status: 'VERIFIED_MATCH' | 'VERIFIED_WITH_CORRECTIONS' | 'UNVERIFIED_NOT_MENTIONED';
+  hasCorrections: boolean;
+  corrections: VerificationCorrection[];
+  verifiedAt: string;
+  detectedLeadDetails?: {
+    contactName?: string | null;
+    companyName?: string | null;
+    email?: string | null;
+    jobTitle?: string | null;
+    phone?: string | null;
+  };
+  summary?: string;
+}
 export type JobStatus =
   | 'PENDING'
   | 'AUDIO_RETRIEVED'
   | 'TRANSCRIBING'
   | 'AI_EDITING'
+  | 'AI_VERIFYING'
   | 'QA_EVALUATING'
   | 'COMPLETED'
   | 'FAILED'
@@ -146,6 +169,8 @@ export interface ProcessingJobItem {
   gcsAudioUri?: string;
   rawTranscript?: RawTranscriptData;
   editedTranscript?: string;
+  verifiedTranscript?: string;
+  verificationResult?: VerificationResultData;
   promptVersionUsed?: string;
   qaStatus?: 'QUALIFIED' | 'NEEDS_REVIEW' | 'REJECTED';
   qaResultJson?: QaResultData;

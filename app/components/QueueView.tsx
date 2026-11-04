@@ -40,7 +40,8 @@ const PROCESS_STEPS = [
   { key: 'recording', label: '1', name: 'Recording', short: 'Audio' },
   { key: 'transcript', label: '2', name: 'Transcript', short: 'Text' },
   { key: 'edit', label: '3', name: 'Edit', short: 'Edit' },
-  { key: 'score', label: '4', name: 'Score', short: 'Score' },
+  { key: 'verify', label: '4', name: 'Verify', short: 'Verify' },
+  { key: 'score', label: '5', name: 'Score', short: 'Score' },
 ] as const;
 
 function ProcessSequence({ job }: { job: ProcessingJobItem }) {
@@ -48,6 +49,7 @@ function ProcessSequence({ job }: { job: ProcessingJobItem }) {
     recording: !!(job.gcsAudioUri || job.lead?.recordingUrl || job.rawTranscript),
     transcript: !!job.rawTranscript,
     edit: !!job.editedTranscript,
+    verify: !!job.verifiedTranscript,
     score: !!(job.qaResultJson || job.qaStatus),
   };
 

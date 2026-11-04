@@ -65,7 +65,7 @@ export default function LeadDetailModal({
   onSaveManualEdit,
   onOverrideQaStatus,
 }: LeadDetailModalProps) {
-  const [activeTab, setActiveTab] = useState<'qa' | 'raw' | 'edited' | 'compare' | 'audit'>('qa');
+  const [activeTab, setActiveTab] = useState<'qa' | 'verified' | 'raw' | 'edited' | 'compare' | 'audit'>('qa');
   const [isEditingTranscript, setIsEditingTranscript] = useState(false);
   const [editedText, setEditedText] = useState(job?.editedTranscript || '');
   const [overrideStatus, setOverrideStatus] = useState<'QUALIFIED' | 'NEEDS_REVIEW' | 'REJECTED'>(
@@ -118,8 +118,9 @@ export default function LeadDetailModal({
   if (!job) return null;
 
   const handleCopyTranscript = () => {
-    if (job?.editedTranscript) {
-      navigator.clipboard.writeText(job.editedTranscript);
+    const textToCopy = job?.verifiedTranscript || job?.editedTranscript;
+    if (textToCopy) {
+      navigator.clipboard.writeText(textToCopy);
       setCopiedTranscript(true);
       setTimeout(() => setCopiedTranscript(false), 2000);
     }
@@ -370,6 +371,23 @@ export default function LeadDetailModal({
           >
             <ShieldCheck className="w-4 h-4" />
             QA Qualification Criteria & Evidence
+          </button>
+
+          <button
+            onClick={() => setActiveTab('verified')}
+            className={`flex items-center gap-2 py-3 px-4 text-xs font-semibold border-b-2 transition-all ${
+              activeTab === 'verified'
+                ? 'border-emerald-500 text-emerald-400'
+                : 'border-transparent text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <ShieldCheck className="w-4 h-4 text-emerald-400" />
+            Verified Transcript (CRM Cross-Check)
+            {job.verificationResult?.hasCorrections && (
+              <span className="rounded-full bg-emerald-500/20 px-1.5 py-0.5 text-[10px] font-bold text-emerald-300">
+                {job.verificationResult.corrections.length} corrected
+              </span>
+            )}
           </button>
 
           <button
@@ -643,14 +661,168 @@ export default function LeadDetailModal({
                 </div>
               </div>
               <div className="rounded-xl border border-white/10 bg-[rgba(10,15,29,0.55)] p-4">
-                <h3 className="mb-3 text-xs font-bold uppercase tracking-wider text-slate-400">AI cleaned transcript</h3>
+                <div className="mb-3 flex items-center justify-between">
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400">
+                    {job.verifiedTranscript ? 'Verified Transcript (Layer 3)' : 'AI Cleaned Transcript (Layer 2)'}
+                  </h3>
+                  {job.verificationResult?.hasCorrections && (
+                    <span className="rounded bg-emerald-500/20 px-1.5 py-0.5 text-[10px] font-bold text-emerald-300">
+                      {job.verificationResult.corrections.length} Spellings Corrected
+                    </span>
+                  )}
+                </div>
                 <div
                   className="whitespace-pre-wrap text-xs leading-relaxed text-slate-200"
                   dangerouslySetInnerHTML={{
-                    __html: highlightEntities(job.editedTranscript || 'No edited transcript yet.', [
+                    __html: highlightEntities(job.verifiedTranscript || job.editedTranscript || 'No verified transcript yet.', [
                       job.lead?.contactName || '',
                       job.lead?.companyName || '',
+                      job.lead?.jobTitle || '',
+                      job.lead?.email || '',
                       job.lead?.country || '',
+                    ]),
+                  }}
+                />
+              </div>
+            </div>
+          )}
+
+          {/* TAB: VERIFIED TRANSCRIPT (LAYER 3: CRM CROSS-CHECK & SPELLING CORRECTION) */}
+          {activeTab === 'verified' && (
+            <div className="space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-xs font-bold uppercase tracking-wider text-slate-300">
+                      Layer 3: CRM Verified & Spell-Corrected Transcript
+                    </h3>
+                    {job.verificationResult?.hasCorrections ? (
+                      <span className="rounded-full border border-emerald-500/30 bg-emerald-500/15 px-2 py-0.5 text-[10px] font-bold text-emerald-300">
+                        ✓ {job.verificationResult.corrections.length} Discrepancy Corrected
+                      </span>
+                    ) : job.verifiedTranscript ? (
+                      <span className="rounded-full border border-sky-500/30 bg-sky-500/15 px-2 py-0.5 text-[10px] font-bold text-sky-300">
+                        ✓ Aligned with CRM Details
+                      </span>
+                    ) : (
+                      <span className="rounded-full border border-amber-500/30 bg-amber-500/15 px-2 py-0.5 text-[10px] font-bold text-amber-300">
+                        Pending Verification
+                      </span>
+                    )}
+                  </div>
+                  <p className="mt-0.5 text-xs text-slate-400">
+                    {job.verificationResult?.summary ||
+                      'Cross-checked against verified CRM lead records (Name, Company, Job Title, Email).'}
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => {
+                      const text = job.verifiedTranscript || job.editedTranscript;
+                      if (text) {
+                        navigator.clipboard.writeText(text);
+                        setCopiedTranscript(true);
+                        setTimeout(() => setCopiedTranscript(false), 2000);
+                      }
+                    }}
+                    disabled={!job.verifiedTranscript && !job.editedTranscript}
+                    className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-emerald-500/30 bg-emerald-600/20 px-3 py-1.5 text-xs font-semibold text-emerald-400 transition-all hover:bg-emerald-600 hover:text-white disabled:opacity-40"
+                  >
+                    <Sparkles className="h-3.5 w-3.5" />
+                    <span>{copiedTranscript ? 'Copied Verified!' : 'Copy Verified Transcript'}</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Lead Details Cross-Check Status Grid */}
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                <div className="rounded-xl border border-white/10 bg-[rgba(10,15,29,0.55)] p-3">
+                  <div className="text-[10px] font-bold uppercase text-slate-400">Contact Name</div>
+                  <div className="mt-1 truncate text-xs font-semibold text-slate-100" title={job.lead?.contactName}>
+                    {job.lead?.contactName || 'N/A'}
+                  </div>
+                  <div className="mt-1 text-[10px] text-emerald-400">
+                    {job.verificationResult?.detectedLeadDetails?.contactName
+                      ? `Detected: ${job.verificationResult.detectedLeadDetails.contactName}`
+                      : 'Verified in CRM'}
+                  </div>
+                </div>
+
+                <div className="rounded-xl border border-white/10 bg-[rgba(10,15,29,0.55)] p-3">
+                  <div className="text-[10px] font-bold uppercase text-slate-400">Company Name</div>
+                  <div className="mt-1 truncate text-xs font-semibold text-slate-100" title={job.lead?.companyName}>
+                    {job.lead?.companyName || 'N/A'}
+                  </div>
+                  <div className="mt-1 text-[10px] text-emerald-400">
+                    {job.verificationResult?.detectedLeadDetails?.companyName
+                      ? `Detected: ${job.verificationResult.detectedLeadDetails.companyName}`
+                      : 'Verified in CRM'}
+                  </div>
+                </div>
+
+                <div className="rounded-xl border border-white/10 bg-[rgba(10,15,29,0.55)] p-3">
+                  <div className="text-[10px] font-bold uppercase text-slate-400">Job Title</div>
+                  <div className="mt-1 truncate text-xs font-semibold text-slate-100" title={job.lead?.jobTitle || ''}>
+                    {job.lead?.jobTitle || 'N/A'}
+                  </div>
+                  <div className="mt-1 text-[10px] text-slate-400">
+                    {job.verificationResult?.detectedLeadDetails?.jobTitle
+                      ? `Detected: ${job.verificationResult.detectedLeadDetails.jobTitle}`
+                      : 'Verified in CRM'}
+                  </div>
+                </div>
+
+                <div className="rounded-xl border border-white/10 bg-[rgba(10,15,29,0.55)] p-3">
+                  <div className="text-[10px] font-bold uppercase text-slate-400">Email Address</div>
+                  <div className="mt-1 truncate text-xs font-semibold text-slate-100" title={job.lead?.email || ''}>
+                    {job.lead?.email || 'N/A'}
+                  </div>
+                  <div className="mt-1 text-[10px] text-slate-400">
+                    {job.verificationResult?.detectedLeadDetails?.email
+                      ? `Detected: ${job.verificationResult.detectedLeadDetails.email}`
+                      : 'Verified in CRM'}
+                  </div>
+                </div>
+              </div>
+
+              {/* Table of Spelling Corrections (if any were applied) */}
+              {(job.verificationResult?.corrections || []).length > 0 && (
+                <div className="overflow-hidden rounded-xl border border-amber-500/20 bg-amber-500/5 p-4">
+                  <div className="mb-2 text-xs font-bold uppercase tracking-wider text-amber-300">
+                    Spelling & Phonetic Discrepancies Corrected:
+                  </div>
+                  <div className="space-y-2">
+                    {job.verificationResult?.corrections.map((corr, idx) => (
+                      <div
+                        key={idx}
+                        className="flex flex-wrap items-center gap-2 rounded-lg border border-white/5 bg-slate-900/60 px-3 py-2 text-xs"
+                      >
+                        <span className="rounded bg-slate-800 px-1.5 py-0.5 text-[10px] font-mono uppercase text-slate-300">
+                          {corr.field}
+                        </span>
+                        <span className="text-rose-400 line-through">&ldquo;{corr.originalInTranscript}&rdquo;</span>
+                        <span className="text-slate-400">➔</span>
+                        <span className="font-semibold text-emerald-300">&ldquo;{corr.correctedTo}&rdquo;</span>
+                        {corr.explanation && (
+                          <span className="text-[11px] text-slate-400 italic">({corr.explanation})</span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Verified Transcript Body */}
+              <div className="rounded-xl border border-slate-800 bg-slate-950/80 p-5 font-sans text-xs leading-relaxed text-slate-200">
+                <div
+                  className="whitespace-pre-wrap leading-relaxed"
+                  dangerouslySetInnerHTML={{
+                    __html: highlightEntities(job.verifiedTranscript || job.editedTranscript || 'No verified transcript yet.', [
+                      job.lead?.contactName || '',
+                      job.lead?.companyName || '',
+                      job.lead?.email || '',
+                      job.lead?.jobTitle || '',
                     ]),
                   }}
                 />

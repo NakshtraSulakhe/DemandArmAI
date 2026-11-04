@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { dbStore } from '../../../../lib/db/store';
 import { pushQaResultToCrm } from '../../../../lib/crm/crmWriteback';
+import { jobWorker } from '../../../../lib/jobs/jobWorker';
 
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -18,6 +19,29 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
       job,
       auditLogs,
     });
+  } catch (err: any) {
+    return NextResponse.json({ success: false, error: err.message }, { status: 500 });
+  }
+}
+
+export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
+  try {
+    const { id } = await params;
+    const body = await req.json().catch(() => ({} as Record<string, any>));
+    const action = body?.action || 'process';
+
+    if (action === 'retry') {
+      const retriedJob = await jobWorker.retryJob(id);
+      return NextResponse.json({ success: true, job: retriedJob });
+    }
+
+    if (action === 'skip') {
+      const result = body?.restore ? await jobWorker.restoreSkippedJob(id) : await jobWorker.skipJob(id);
+      return NextResponse.json({ success: true, job: result });
+    }
+
+    const result = body?.restart ? await jobWorker.restartJob(id) : await jobWorker.processSingleJob(id);
+    return NextResponse.json({ success: true, job: result });
   } catch (err: any) {
     return NextResponse.json({ success: false, error: err.message }, { status: 500 });
   }

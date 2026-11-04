@@ -387,6 +387,8 @@ export class LocalDbStore {
           gcsAudioUri: j.gcsAudioUri || undefined,
           rawTranscript: safeParseJson<any>(j.rawTranscript, j.rawTranscript || undefined),
           editedTranscript: safeParseJson<any>(j.editedTranscript, j.editedTranscript || undefined),
+          verifiedTranscript: safeParseJson<any>((j as any).verifiedTranscript, (j as any).verifiedTranscript || undefined),
+          verificationResult: safeParseJson<any>((j as any).verificationResult, undefined),
           promptVersionUsed: j.promptVersionUsed || undefined,
           qaStatus: (j.qaStatus as any) || undefined,
           qaResultJson: safeParseJson<any>(j.qaResultJson, j.qaResultJson || undefined),
@@ -802,6 +804,8 @@ export class LocalDbStore {
           gcsAudioUri: job.gcsAudioUri || null,
           rawTranscript: job.rawTranscript ? safeStringify(job.rawTranscript) : null,
           editedTranscript: job.editedTranscript ? safeStringify(job.editedTranscript) : null,
+          verifiedTranscript: job.verifiedTranscript ? safeStringify(job.verifiedTranscript) : null,
+          verificationResult: job.verificationResult ? safeStringify(job.verificationResult) : null,
           promptVersionUsed: job.promptVersionUsed || null,
           qaStatus: job.qaStatus || null,
           qaResultJson: job.qaResultJson ? safeStringify(job.qaResultJson) : null,
@@ -824,6 +828,8 @@ export class LocalDbStore {
           gcsAudioUri: job.gcsAudioUri || null,
           rawTranscript: job.rawTranscript ? safeStringify(job.rawTranscript) : null,
           editedTranscript: job.editedTranscript ? safeStringify(job.editedTranscript) : null,
+          verifiedTranscript: job.verifiedTranscript ? safeStringify(job.verifiedTranscript) : null,
+          verificationResult: job.verificationResult ? safeStringify(job.verificationResult) : null,
           promptVersionUsed: job.promptVersionUsed || null,
           qaStatus: job.qaStatus || null,
           qaResultJson: job.qaResultJson ? safeStringify(job.qaResultJson) : null,
@@ -1190,7 +1196,7 @@ export class LocalDbStore {
     const isPendingQa = isPendingCrmQa(lead);
     const hasRecording = !!(lead.recordingUrl || (lead.recordings && lead.recordings.length > 0));
     const isCompleted = job?.status === 'COMPLETED' || !!job?.editedTranscript;
-    const isActiveOrQueued = job && ['PENDING', 'QUEUED', 'AUDIO_RETRIEVED', 'TRANSCRIBING', 'AI_EDITING', 'QA_EVALUATING'].includes(job.status);
+    const isActiveOrQueued = job && ['PENDING', 'QUEUED', 'AUDIO_RETRIEVED', 'TRANSCRIBING', 'AI_EDITING', 'AI_VERIFYING', 'QA_EVALUATING'].includes(job.status);
 
     return isPendingQa && hasRecording && !isCompleted && !isActiveOrQueued;
   }
