@@ -409,6 +409,8 @@ export interface CrmSyncMetricsState {
   consecutiveFailures: number;
   lastFastSyncAt?: string;
   lastReconciliationSyncAt?: string;
+  /** ISO timestamp of the last SUCCESSFUL scheduled auto-sync. Used as incremental date filter. */
+  lastSuccessfulAutoSyncAt?: string;
   activeClientCodes: string[];
   clientMetrics: Record<string, ClientSyncMetrics>;
 }

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { dbStore } from '../../../../../lib/db/store';
 import { geminiService } from '../../../../../lib/ai/geminiService';
+import { transcriptVerifier } from '../../../../../lib/ai/transcriptVerifier';
 import { qaEngine } from '../../../../../lib/qa/qaEngine';
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -45,6 +46,27 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       job.promptVersionUsed = `${edited.versionTag} (Reprocessed)`;
       job.promptTokens = (job.promptTokens || 0) + edited.promptTokens;
       job.completionTokens = (job.completionTokens || 0) + edited.completionTokens;
+
+      // Layer 3: Cross-check & Verification
+      job.status = 'AI_VERIFYING';
+      dbStore.saveJob(job);
+      const verified = await transcriptVerifier.verifyAndCorrectTranscript(
+        client,
+        campaign,
+        lead,
+        job.editedTranscript
+      );
+      job.verifiedTranscript = verified.verifiedTranscript;
+      job.verificationResult = verified.result;
+
+      if (verified.result.hasAssetMismatch) {
+        dbStore.addAuditLog(
+          job.id,
+          'ASSET_MISMATCH_ALERT',
+          `Campaign Asset Mismatch: Spoken asset "${verified.result.detectedLeadDetails?.detectedAssetTitle || 'Unknown'}" does not match expected "${campaign?.assetTitle || lead.campaignName}".`
+        );
+      }
+
       job.status = 'QA_EVALUATING';
       dbStore.saveJob(job);
 
@@ -53,7 +75,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         campaign,
         lead,
         job.rawTranscript,
-        edited.editedTranscript
+        job.verifiedTranscript || edited.editedTranscript
       );
 
       job.qaResultJson = qaResult;

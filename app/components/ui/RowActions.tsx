@@ -179,7 +179,8 @@ export default function RowActions({
   };
 
   const showProgress = running || isLiveStatus(job.status);
-  const canProcess = !showProgress && !String(job.id).startsWith('stored_') && (job.status === 'PENDING' || (job.status as string) === 'QUEUED');
+  const hasAudio = !!(job.lead?.recordingUrl || (job.lead?.recordings && job.lead.recordings.length > 0));
+  const canProcess = !showProgress && ((job.status === 'PENDING' || (job.status as string) === 'QUEUED') || (String(job.id).startsWith('stored_') && hasAudio));
   const canRetry =
     !showProgress &&
     (job.status === 'FAILED' ||

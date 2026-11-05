@@ -100,6 +100,10 @@ interface QueueViewProps {
   setAgentFilter: (agent: string) => void;
   dateFilter: string;
   setDateFilter: (date: string) => void;
+  customDateFrom?: string;
+  setCustomDateFrom?: (from: string) => void;
+  customDateTo?: string;
+  setCustomDateTo?: (to: string) => void;
   recordingFilter: string;
   setRecordingFilter: (recording: string) => void;
   stageFilter: string;
@@ -145,6 +149,10 @@ export default function QueueView({
   setAgentFilter,
   dateFilter,
   setDateFilter,
+  customDateFrom = '',
+  setCustomDateFrom = () => {},
+  customDateTo = '',
+  setCustomDateTo = () => {},
   recordingFilter,
   setRecordingFilter,
   stageFilter,
@@ -189,7 +197,7 @@ export default function QueueView({
     selectedClientCode !== 'ALL'
       ? campaigns.filter((cmp) => cmp.clientCode.toUpperCase() === selectedClientCode.toUpperCase())
       : campaigns;
-  const filtersActive = [selectedClientCode, selectedCampaignCode, qaFilter, agentFilter, dateFilter, recordingFilter, stageFilter, searchQuery].some((value) => value && value !== 'ALL');
+  const filtersActive = [selectedClientCode, selectedCampaignCode, qaFilter, agentFilter, dateFilter, recordingFilter, stageFilter, searchQuery, customDateFrom, customDateTo].some((value) => value && value !== 'ALL');
   const filterClass = 'px-3 py-1.5 bg-slate-950/60 border border-slate-800/60 rounded-xl text-xs text-slate-300 focus:outline-none focus:border-blue-500';
 
   return (
@@ -386,10 +394,32 @@ export default function QueueView({
 
             <select value={dateFilter} onChange={(e) => setDateFilter(e.target.value)} className={filterClass} aria-label="Date">
               <option value="ALL">All dates</option>
-              <option value="today">Today (UTC)</option>
+              <option value="today">Today</option>
               <option value="7">Last 7 days</option>
-              <option value="30">Last 30 days</option>
+              <option value="monthly">Monthly</option>
+              <option value="custom">Custom Range</option>
             </select>
+
+            {dateFilter === 'custom' && (
+              <div className="flex items-center gap-1.5 bg-slate-900/90 border border-blue-500/50 rounded-xl px-2.5 py-1 text-xs text-slate-200">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-blue-400">From:</span>
+                <input
+                  type="date"
+                  value={customDateFrom}
+                  onChange={(e) => setCustomDateFrom(e.target.value)}
+                  className="bg-slate-950/80 border border-slate-700/80 rounded-lg px-2 py-0.5 text-xs text-slate-100 focus:outline-none focus:border-blue-400 [color-scheme:dark]"
+                  aria-label="Start date"
+                />
+                <span className="text-[10px] font-bold uppercase tracking-wider text-blue-400 ml-1">To:</span>
+                <input
+                  type="date"
+                  value={customDateTo}
+                  onChange={(e) => setCustomDateTo(e.target.value)}
+                  className="bg-slate-950/80 border border-slate-700/80 rounded-lg px-2 py-0.5 text-xs text-slate-100 focus:outline-none focus:border-blue-400 [color-scheme:dark]"
+                  aria-label="End date"
+                />
+              </div>
+            )}
 
             <select value={recordingFilter} onChange={(e) => setRecordingFilter(e.target.value)} className={filterClass} aria-label="Recording">
               <option value="ALL">All recordings</option>
@@ -587,7 +617,8 @@ export default function QueueView({
                   const aiQa = (job.manualOverrideStatus || job.qaStatus || 'Not scored').toString().trim();
                   const qualityScore = typeof job.qaResultJson?.overallScore === 'number' ? job.qaResultJson.overallScore : null;
 
-                  const createdDateObj = crmCreatedDate(lead?.createdAt);
+                  const rawLeadDate = (lead as any)?.rawLeadData?.created_at_utc || (lead as any)?.rawLeadData?.created_at || (lead as any)?.rawLeadData?.lead_date || lead?.createdAt || lead?.syncedAt || job.createdAt;
+                  const createdDateObj = crmCreatedDate(rawLeadDate);
                   const formattedDate = Number.isNaN(createdDateObj.getTime())
                     ? '—'
                     : createdDateObj.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' });

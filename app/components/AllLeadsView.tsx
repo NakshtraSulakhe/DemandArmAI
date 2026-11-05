@@ -12,6 +12,8 @@ import {
   ChevronLeft,
   ChevronRight,
   FilterX,
+  Sparkles,
+  FileText,
 } from 'lucide-react';
 import { ClientConfig, CampaignConfig, ProcessingJobItem } from '../../lib/types';
 import StatusBadge from './ui/StatusBadge';
@@ -45,6 +47,12 @@ interface AllLeadsViewProps {
   setDateFilter: (date: string) => void;
   recordingFilter: string;
   setRecordingFilter: (recording: string) => void;
+  transcriptFilter?: string;
+  setTranscriptFilter?: (transcript: string) => void;
+  customDateFrom?: string;
+  setCustomDateFrom?: (from: string) => void;
+  customDateTo?: string;
+  setCustomDateTo?: (to: string) => void;
   agentOptions: string[];
   onClearFilters: () => void;
   searchQuery: string;
@@ -85,6 +93,12 @@ export default function AllLeadsView({
   setDateFilter,
   recordingFilter,
   setRecordingFilter,
+  transcriptFilter = 'ALL',
+  setTranscriptFilter = () => {},
+  customDateFrom = '',
+  setCustomDateFrom = () => {},
+  customDateTo = '',
+  setCustomDateTo = () => {},
   agentOptions,
   onClearFilters,
   searchQuery,
@@ -104,7 +118,7 @@ export default function AllLeadsView({
     selectedClientCode !== 'ALL'
       ? campaigns.filter((c) => c.clientCode.toUpperCase() === selectedClientCode.toUpperCase())
       : campaigns;
-  const filtersActive = [selectedClientCode, selectedCampaignCode, statusFilter, qaFilter, agentFilter, dateFilter, recordingFilter, searchQuery].some((value) => value && value !== 'ALL');
+  const filtersActive = [selectedClientCode, selectedCampaignCode, statusFilter, qaFilter, agentFilter, dateFilter, recordingFilter, transcriptFilter, searchQuery, customDateFrom, customDateTo].some((value) => value && value !== 'ALL');
   const filterClass = 'bg-slate-950/60 border border-slate-800/60 rounded-xl px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-blue-500/80 transition-all';
 
   return (
@@ -286,9 +300,45 @@ export default function AllLeadsView({
 
             <select value={dateFilter} onChange={(e) => setDateFilter(e.target.value)} className={filterClass} aria-label="Created date">
               <option value="ALL">All dates</option>
-              <option value="today">Today (UTC)</option>
+              <option value="today">Today</option>
               <option value="7">Last 7 days</option>
-              <option value="30">Last 30 days</option>
+              <option value="monthly">Monthly</option>
+              <option value="custom">Custom Range</option>
+            </select>
+
+            {dateFilter === 'custom' && (
+              <div className="flex items-center gap-1.5 bg-slate-900/90 border border-blue-500/50 rounded-xl px-2.5 py-1 text-xs text-slate-200">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-blue-400">From:</span>
+                <input
+                  type="date"
+                  value={customDateFrom}
+                  onChange={(e) => setCustomDateFrom(e.target.value)}
+                  className="bg-slate-950/80 border border-slate-700/80 rounded-lg px-2 py-0.5 text-xs text-slate-100 focus:outline-none focus:border-blue-400 [color-scheme:dark]"
+                  aria-label="Start date"
+                />
+                <span className="text-[10px] font-bold uppercase tracking-wider text-blue-400 ml-1">To:</span>
+                <input
+                  type="date"
+                  value={customDateTo}
+                  onChange={(e) => setCustomDateTo(e.target.value)}
+                  className="bg-slate-950/80 border border-slate-700/80 rounded-lg px-2 py-0.5 text-xs text-slate-100 focus:outline-none focus:border-blue-400 [color-scheme:dark]"
+                  aria-label="End date"
+                />
+              </div>
+            )}
+
+            <select
+              value={transcriptFilter}
+              onChange={(e) => setTranscriptFilter(e.target.value)}
+              className={filterClass}
+              aria-label="Transcript status"
+            >
+              <option value="ALL">All Transcripts</option>
+              <option value="Verified">Verified ✓</option>
+              <option value="Edited">AI Edited ✨</option>
+              <option value="Raw">Raw STT 📝</option>
+              <option value="Generating">Generating ⏳</option>
+              <option value="Not Generated">Not Generated</option>
             </select>
 
             <select value={recordingFilter} onChange={(e) => setRecordingFilter(e.target.value)} className={filterClass} aria-label="Recording">
@@ -314,13 +364,14 @@ export default function AllLeadsView({
         <div className="overflow-x-auto">
           <table className="lead-table w-full min-w-[54rem] table-fixed border-collapse text-left text-xs">
             <colgroup>
-              <col className="w-14" />
+              <col className="w-12" />
               <col className="w-[6.5rem]" />
               <col />
               <col />
               <col />
-              <col className="w-[8rem]" />
-              <col className="w-[12rem]" />
+              <col className="w-[9rem]" />
+              <col className="w-[7.5rem]" />
+              <col className="w-[11rem]" />
             </colgroup>
             <thead className="bg-slate-900/60 text-slate-400 font-bold uppercase tracking-wider border-b border-slate-800/40">
               <tr>
@@ -329,6 +380,7 @@ export default function AllLeadsView({
                 <th className="py-3 px-3">LEAD</th>
                 <th className="py-3 px-3">COMPANY</th>
                 <th className="py-3 px-3" title="Campaign and agent">CAMPAIGN</th>
+                <th className="py-3 px-3">TRANSCRIPT</th>
                 <th className="py-3 px-3">QUALITY</th>
                 <th className="py-3 px-2 text-right">ACTIONS</th>
               </tr>
@@ -341,7 +393,11 @@ export default function AllLeadsView({
                   const rawQaStatus = (lead?.qaStatusCrm || job.qaStatus || 'Pending QA').toString().trim();
                   const effectiveQa = job.manualOverrideStatus || job.qaStatus || rawQaStatus;
 
-                  const createdDateObj = new Date(lead?.createdAt || lead?.syncedAt || job.createdAt);
+                  const rawLeadDate = (lead as any)?.rawLeadData?.created_at_utc || (lead as any)?.rawLeadData?.created_at || (lead as any)?.rawLeadData?.lead_date || lead?.createdAt || lead?.syncedAt || job.createdAt;
+                  const dateStr = typeof rawLeadDate === 'string' && /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}/.test(rawLeadDate)
+                    ? rawLeadDate.replace(' ', 'T') + (rawLeadDate.includes('Z') ? '' : 'Z')
+                    : rawLeadDate;
+                  const createdDateObj = new Date(dateStr);
                   const validDate = !Number.isNaN(createdDateObj.getTime());
                   const formattedDate = validDate
                     ? createdDateObj.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' })
@@ -398,6 +454,51 @@ export default function AllLeadsView({
                         )}
                       </td>
 
+                      {/* TRANSCRIPT STATUS */}
+                      <td className="px-3 py-2 align-middle">
+                        {job.verifiedTranscript ? (
+                          <div className="flex flex-col gap-0.5">
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 w-fit">
+                              <Sparkles className="w-3 h-3 text-emerald-400 shrink-0" />
+                              Verified
+                            </span>
+                            {job.verificationResult?.hasAssetMismatch && (
+                              <span className="text-[10px] font-bold text-rose-300 flex items-center gap-0.5">
+                                ⚠️ Asset Mismatch
+                              </span>
+                            )}
+                            {job.verificationResult?.hasCorrections && (
+                              <span className="text-[10px] text-slate-400">
+                                {job.verificationResult.corrections.length} corrected
+                              </span>
+                            )}
+                          </div>
+                        ) : job.editedTranscript ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-blue-500/15 text-blue-300 border border-blue-500/30 w-fit">
+                            <Sparkles className="w-3 h-3 text-blue-400 shrink-0" />
+                            AI Edited
+                          </span>
+                        ) : job.rawTranscript ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-indigo-500/15 text-indigo-300 border border-indigo-500/30 w-fit">
+                            <FileText className="w-3 h-3 text-indigo-400 shrink-0" />
+                            Raw STT
+                          </span>
+                        ) : ['TRANSCRIBING', 'AI_EDITING', 'AI_VERIFYING', 'QA_EVALUATING'].includes(job.status) ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-amber-500/15 text-amber-300 border border-amber-500/30 w-fit">
+                            <Clock className="w-3 h-3 text-amber-400 shrink-0 animate-spin" />
+                            Generating
+                          </span>
+                        ) : job.status === 'FAILED' ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-rose-500/15 text-rose-300 border border-rose-500/30 w-fit">
+                            Failed
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-slate-800 text-slate-400 border border-slate-700/50 w-fit">
+                            Not Generated
+                          </span>
+                        )}
+                      </td>
+
                       {/* QUALITY BADGE */}
                       <td className="overflow-hidden px-3 py-2 align-middle">
                         <StatusBadge status={effectiveQa} size="sm" />
@@ -420,7 +521,7 @@ export default function AllLeadsView({
                 })
               ) : (
                 <tr>
-                  <td colSpan={7} className="py-4">
+                  <td colSpan={8} className="py-4">
                     <EmptyState
                       icon={<FilterX className="w-8 h-8 text-slate-500" />}
                       title="No leads matching criteria"

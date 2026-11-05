@@ -110,12 +110,67 @@ export function currentUtcDay(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
-export function matchesDateRange(value: string | undefined, range: string | null | undefined): boolean {
-  if (!range || range === 'ALL') return true;
+export function getLeadTrueDate(lead: any): string {
+  if (!lead) return '';
+  const raw = lead.rawLeadData || {};
+  return (
+    raw.created_at_utc ||
+    raw.created_at ||
+    raw.lead_date ||
+    raw.call_date ||
+    lead.createdAt ||
+    lead.syncedAt ||
+    ''
+  );
+}
+
+export function matchesDateRange(
+  value: string | undefined,
+  range: string | null | undefined,
+  dateFrom?: string | null,
+  dateTo?: string | null
+): boolean {
   if (!value) return false;
+  if (!range || range === 'ALL') {
+    if (!dateFrom && !dateTo) return true;
+  }
   const date = asUtcDate(value);
   if (Number.isNaN(date.getTime())) return false;
-  if (range === 'today') return utcDateKey(value) === currentUtcDay();
+  const targetKey = utcDateKey(value);
+  const todayKey = currentUtcDay();
+
+  if (range === 'custom' || range?.startsWith('custom:') || dateFrom || dateTo) {
+    let from = dateFrom;
+    let to = dateTo;
+    if (range?.startsWith('custom:')) {
+      const parts = range.split(':');
+      from = parts[1] || from;
+      to = parts[2] || to;
+    }
+    if (from && from.trim()) {
+      const fromKey = from.trim().slice(0, 10);
+      if (targetKey < fromKey) return false;
+    }
+    if (to && to.trim()) {
+      const toKey = to.trim().slice(0, 10);
+      if (targetKey > toKey) return false;
+    }
+    return true;
+  }
+
+  if (range === 'today') {
+    return targetKey === todayKey;
+  }
+  if (range === 'yesterday') {
+    const todayDate = dateFromKey(todayKey);
+    const yestDate = new Date(Date.UTC(todayDate.getUTCFullYear(), todayDate.getUTCMonth(), todayDate.getUTCDate() - 1));
+    const yesterdayKey = yestDate.toISOString().slice(0, 10);
+    return targetKey === yesterdayKey;
+  }
+  if (range === 'monthly' || range === 'month') {
+    return date.getTime() >= Date.now() - 30 * 24 * 60 * 60 * 1000;
+  }
+  if (!range) return true;
   const days = parseInt(range, 10);
   if (!days || Number.isNaN(days)) return true;
   return date.getTime() >= Date.now() - days * 24 * 60 * 60 * 1000;
@@ -217,6 +272,14 @@ export class LocalDbStore {
         const raw = fs.readFileSync(STORE_FILE, 'utf-8').trim();
         if (raw) {
           this.data = JSON.parse(raw);
+          if (Array.isArray(this.data.leads)) {
+            this.data.leads.forEach((l) => {
+              const trueDate = getLeadTrueDate(l);
+              if (trueDate && trueDate !== l.createdAt) {
+                l.createdAt = trueDate;
+              }
+            });
+          }
         }
       }
       if (!Array.isArray(this.data.dismissedLeadRefs)) this.data.dismissedLeadRefs = [];
@@ -368,7 +431,7 @@ export class LocalDbStore {
           rawLeadData: raw,
           recordings: Array.isArray(raw?.recordings) ? raw.recordings : undefined,
           syncedAt: l.syncedAt.toISOString(),
-          createdAt: l.createdAt.toISOString(),
+          createdAt: raw?.created_at_utc || raw?.created_at || raw?.lead_date || l.createdAt.toISOString(),
           updatedAt: l.updatedAt.toISOString(),
           };
         });
@@ -776,6 +839,7 @@ export class LocalDbStore {
           qaStatusCrm: lead.qaStatusCrm || null,
           rawLeadData: leadDetailPayload(lead),
           syncedAt: new Date(lead.syncedAt || Date.now()),
+          createdAt: lead.createdAt ? new Date(lead.createdAt) : undefined,
         },
       });
     } catch (e) {
@@ -1224,9 +1288,14 @@ export class LocalDbStore {
     });
 
     const mappedJobs = this.data.jobs.map((job) => {
-      const lead = leadsMap.get(job.leadId) || leadsMap.get(job.leadRef);
-      const client = lead ? clientsMap.get(lead.clientCode.trim().toUpperCase()) : undefined;
-      const campaign = lead ? campaignsMap.get(lead.campaignCode.trim().toUpperCase()) : undefined;
+      const lead =
+        (job.leadId && leadsMap.get(job.leadId)) ||
+        (job.leadRef && leadsMap.get(job.leadRef)) ||
+        (job.leadId && leadsMap.get(job.leadId.trim())) ||
+        (job.leadRef && leadsMap.get(job.leadRef.trim())) ||
+        job.lead;
+      const client = (lead?.clientCode && clientsMap.get(lead.clientCode.trim().toUpperCase())) || job.client;
+      const campaign = (lead?.campaignCode && campaignsMap.get(lead.campaignCode.trim().toUpperCase())) || job.campaign;
       return {
         ...job,
         lead,

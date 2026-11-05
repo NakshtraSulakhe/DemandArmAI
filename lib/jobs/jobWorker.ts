@@ -98,6 +98,23 @@ export class JobWorker {
    */
   public async processSingleJob(jobId: string): Promise<ProcessingJobItem> {
     let job = dbStore.getJobById(jobId);
+    if (!job && jobId.startsWith('stored_')) {
+      const leadId = jobId.slice('stored_'.length);
+      const lead = dbStore.getLeads().find((l) => l.id === leadId || l.leadRef === leadId);
+      if (lead) {
+        job = {
+          id: `job_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+          leadId: lead.id,
+          leadRef: lead.leadRef,
+          status: 'PENDING',
+          attempts: 0,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          lead,
+        };
+        dbStore.saveJob(job);
+      }
+    }
     if (!job) {
       throw new Error(`Job not found: ${jobId}`);
     }

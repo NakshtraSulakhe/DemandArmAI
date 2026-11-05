@@ -15,10 +15,15 @@ export async function GET() {
   }
 }
 
-export async function POST() {
+export async function POST(req: Request) {
   try {
     ensurePipelineStarted();
-    const metrics = await crmSyncWorker.runFastSync();
+    const body = await req.json().catch(() => ({}));
+    const dateFrom = body.dateFrom || body.date_from;
+    const isFull = body.full === true || body.fullSync === true;
+    const metrics = isFull
+      ? await crmSyncWorker.runReconciliationSync()
+      : await crmSyncWorker.runFastSync(dateFrom);
     return NextResponse.json({
       success: true,
       metrics,
@@ -27,4 +32,3 @@ export async function POST() {
     return NextResponse.json({ success: false, error: err.message }, { status: 500 });
   }
 }
-

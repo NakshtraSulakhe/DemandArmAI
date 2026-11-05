@@ -144,6 +144,11 @@ export class CrmClient {
                 };
                 syncedJobsMap.set(parsedLead.leadRef, newJob);
                 newJobsCount++;
+              } else if (existingJob && existingJob.status === 'SKIPPED') {
+                existingJob.status = 'PENDING';
+                existingJob.updatedAt = new Date().toISOString();
+                syncedJobsMap.set(parsedLead.leadRef, existingJob);
+                newJobsCount++;
               }
             }
           }

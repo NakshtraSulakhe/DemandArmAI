@@ -25,6 +25,7 @@ export class CrmSyncWorkerService {
 
   private lastFastSyncAt?: string;
   private lastReconciliationSyncAt?: string;
+  private lastSuccessfulAutoSyncAt?: string; // Tracks last successful scheduled sync timestamp
 
   private metricsState: CrmSyncMetricsState = {
     globalStatus: 'IDLE',
@@ -56,8 +57,9 @@ export class CrmSyncWorkerService {
     console.log(`[CRM Sync Worker] Fast sync every ${minutes} minutes.`);
     
     // Initial sync run on server start after 5 seconds delay
+    // First run is treated as auto so it uses the lastSuccessfulAutoSyncAt if available.
     setTimeout(() => {
-      this.runFastSync().catch((err) => console.error('[CRM Sync Worker] Initial sync error:', err));
+      this.runFastSync(undefined, true).catch((err) => console.error('[CRM Sync Worker] Initial sync error:', err));
     }, 5000);
 
     // Schedule Fast Sync (every 2 minutes)
@@ -91,7 +93,7 @@ export class CrmSyncWorkerService {
     this.currentIntervalMs = this.delayForNextSync();
     this.metricsState.currentSyncIntervalMinutes = Math.round(this.currentIntervalMs / 60000);
     this.fastSyncTimer = setTimeout(() => {
-      this.runFastSync()
+      this.runFastSync(undefined, true)  // isAutoSync=true: skip already-fetched leads
         .then(() => this.scheduleNextFastSync())
         .catch((err) => {
           console.error('[CRM Sync Worker] Fast Sync execution error:', err);
@@ -101,13 +103,35 @@ export class CrmSyncWorkerService {
   }
 
   /**
-   * Triggers FAST SYNC across all active clients (2-minute creation window).
+   * Triggers FAST SYNC across all active clients.
+   *
+   * - AUTO sync (isAutoSync=true, called by scheduler):
+   *     Only fetches leads created/updated SINCE the last successful auto-sync.
+   *     Leads already in the DB that haven't changed are never re-fetched from the CRM API.
+   *
+   * - MANUAL sync (isAutoSync=false, default, called by the sync button):
+   *     Fetches ALL pending QA leads with no date restriction to catch everything.
+   *
+   * @param customDateFrom  Override the date filter (optional, used for testing).
+   * @param isAutoSync      Pass true when called from the scheduler (default: false).
    */
-  public async runFastSync(): Promise<CrmSyncMetricsState> {
+  public async runFastSync(customDateFrom?: string, isAutoSync = false): Promise<CrmSyncMetricsState> {
     this.lastFastSyncAt = new Date().toISOString();
-    const lookbackMinutes = Math.max(dbStore.getSettings().autoSyncInterval || 15, 60);
-    const from = new Date(Date.now() - lookbackMinutes * 60 * 1000);
-    return this.executeSyncPass('FAST', from.toISOString().slice(0, 10));
+
+    let dateFromStr: string;
+    if (customDateFrom !== undefined) {
+      // Explicit override (e.g. from tests or API body)
+      dateFromStr = customDateFrom;
+    } else if (isAutoSync && this.lastSuccessfulAutoSyncAt) {
+      // Auto-sync: only fetch leads touched since the last successful run.
+      // Slice to date string (YYYY-MM-DD) so the CRM API date filter applies correctly.
+      dateFromStr = this.lastSuccessfulAutoSyncAt.slice(0, 10);
+    } else {
+      // Manual sync or first-ever run: fetch everything (no date restriction).
+      dateFromStr = '';
+    }
+
+    return this.executeSyncPass('FAST', dateFromStr, isAutoSync);
   }
 
   /**
@@ -120,10 +144,13 @@ export class CrmSyncWorkerService {
 
   /**
    * Main synchronization pass execution engine with locking, load protection, and adaptive backoff.
+   * @param isAutoSync  When true, stamps lastSuccessfulAutoSyncAt on completion so the next
+   *                    scheduled run can use it as a date filter to skip already-fetched leads.
    */
   private async executeSyncPass(
     syncType: 'FAST' | 'RECONCILIATION',
-    dateFromStr: string
+    dateFromStr: string,
+    isAutoSync = false
   ): Promise<CrmSyncMetricsState> {
     // 1. Check Global Lock
     if (this.isSyncing) {
@@ -137,13 +164,15 @@ export class CrmSyncWorkerService {
 
     try {
       const settings = dbStore.getSettings();
-      let activeClients = dbStore.getClients().filter((c) => c.isActive);
-      let activeClientCodes = activeClients.map((c) => c.code.trim());
-
-      // If no active clients in DB, fallback to known CRM client codes to discover all leads
-      if (activeClientCodes.length === 0) {
-        activeClientCodes = ['1020', '1010', '1030'];
-      }
+      const knownCodes = ['1020', '1010', '1030'];
+      const dbClients = dbStore.getClients();
+      const inactiveCodes = new Set(dbClients.filter((c) => !c.isActive).map((c) => c.code.trim()));
+      const activeClientCodes = Array.from(
+        new Set([
+          ...dbClients.filter((c) => c.isActive).map((c) => c.code.trim()),
+          ...knownCodes,
+        ])
+      ).filter((code) => !inactiveCodes.has(code));
       this.metricsState.activeClientCodes = activeClientCodes;
 
       const crmEndpoint =
@@ -161,7 +190,7 @@ export class CrmSyncWorkerService {
         }
 
         this.clientLocks.set(clientCode, true);
-        const clientObj = activeClients.find((c) => c.code.trim() === clientCode);
+        const clientObj = dbClients.find((c) => c.code.trim() === clientCode);
         const clientName = clientObj?.name || `Client ${clientCode}`;
 
         const clientMetric: ClientSyncMetrics = {
@@ -182,13 +211,59 @@ export class CrmSyncWorkerService {
         const clientStartTime = Date.now();
 
         try {
-          // Fetch paginated leads from CRM API
-          const { leads, pagesProcessed } = await this.fetchClientLeadsPaginated(
-            crmEndpoint,
-            decryptCredential(settings.crmApiKey),
-            clientCode,
-            dateFromStr
-          );
+          let leads: any[] = [];
+          let pagesProcessed = 0;
+
+          if (syncType === 'RECONCILIATION') {
+            const res = await this.fetchClientLeadsPaginated(
+              crmEndpoint,
+              decryptCredential(settings.crmApiKey),
+              clientCode,
+              ''
+            );
+            leads = res.leads;
+            pagesProcessed = res.pagesProcessed;
+          } else {
+            // FAST SYNC – two strategies depending on who triggered the sync:
+            //
+            // AUTO-SYNC (isAutoSync=true):
+            //   dateFromStr = last-successful-sync date → only fetch leads created/updated
+            //   SINCE that date. Leads already in the DB are not re-fetched.
+            //   Both the "pending" call and the "recent" call use the same date filter so
+            //   the CRM API does the heavy lifting of filtering on its side.
+            //
+            // MANUAL SYNC (isAutoSync=false, button click or first run):
+            //   dateFromStr = '' → no date filter, fetch everything so nothing is missed.
+            //
+            // In both cases we still combine a qa_status=Pending call (to catch pending
+            // leads that might be missed by date alone) with a general recent-leads call.
+
+            const pendingFetch = this.fetchClientLeadsPaginated(
+              crmEndpoint,
+              decryptCredential(settings.crmApiKey),
+              clientCode,
+              dateFromStr || undefined, // Use date filter for auto-sync; no filter for manual
+              'Pending'
+            );
+
+            // General recent fetch: same date window, no status filter (catches status changes)
+            const recentFetch = this.fetchClientLeadsPaginated(
+              crmEndpoint,
+              decryptCredential(settings.crmApiKey),
+              clientCode,
+              dateFromStr || undefined
+            );
+
+            const [pendingRes, recentRes] = await Promise.all([pendingFetch, recentFetch]);
+
+            const merged = new Map<string, any>();
+            for (const l of [...pendingRes.leads, ...recentRes.leads]) {
+              const key = (l.id || l.lead_reference_number || l.lead_id || Math.random()).toString();
+              merged.set(key, l);
+            }
+            leads = Array.from(merged.values());
+            pagesProcessed = pendingRes.pagesProcessed + recentRes.pagesProcessed;
+          }
 
           clientMetric.recordsFetched = leads.length;
           clientMetric.pagesProcessed = pagesProcessed;
@@ -276,6 +351,12 @@ export class CrmSyncWorkerService {
                 dbStore.upsertLeadsAndSyncJobs([parsedLead], [newJob]);
                 clientMetric.newJobsCreated++;
                 totalEnqueuedJobs++;
+              } else if (existingJob.status === 'SKIPPED') {
+                existingJob.status = 'PENDING';
+                existingJob.updatedAt = new Date().toISOString();
+                dbStore.saveJob(existingJob);
+                clientMetric.newJobsCreated++;
+                totalEnqueuedJobs++;
               }
             }
           }
@@ -296,11 +377,37 @@ export class CrmSyncWorkerService {
         }
       }
 
+      // Ensure all existing pending QA leads in DB that are queue eligible also get enqueued
+      const allDbLeads = dbStore.getLeads();
+      for (const lead of allDbLeads) {
+        const existingJob = dbStore.getJobById(lead.leadRef);
+        if (dbStore.isQueueEligible(lead, existingJob) && !existingJob) {
+          const newJob: ProcessingJobItem = {
+            id: `job_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+            leadId: lead.id,
+            leadRef: lead.leadRef,
+            status: 'PENDING',
+            attempts: 0,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          };
+          dbStore.upsertLeadsAndSyncJobs([lead], [newJob]);
+          totalEnqueuedJobs++;
+        }
+      }
+
       this.consecutiveFailures = 0;
       this.currentIntervalMs = this.delayForNextSync();
       this.metricsState.consecutiveFailures = 0;
       this.metricsState.currentSyncIntervalMinutes = Math.round(this.currentIntervalMs / 60000);
       this.metricsState.globalStatus = 'IDLE';
+
+      // Stamp the last-successful-auto-sync time so the next scheduled run only
+      // fetches leads created/updated after this point (skips already-fetched leads).
+      if (isAutoSync && syncType === 'FAST') {
+        this.lastSuccessfulAutoSyncAt = new Date().toISOString();
+        console.log(`[CRM Sync Worker] lastSuccessfulAutoSyncAt updated to ${this.lastSuccessfulAutoSyncAt}`);
+      }
 
       dbStore.addAuditLog(
         undefined,
@@ -349,7 +456,8 @@ export class CrmSyncWorkerService {
     baseUrl: string,
     apiKey: string,
     clientCode: string,
-    dateFromStr: string
+    dateFromStr?: string,
+    qaStatus?: string
   ): Promise<{ leads: any[]; pagesProcessed: number }> {
     let allLeads: any[] = [];
     let page = 1;
@@ -368,6 +476,9 @@ export class CrmSyncWorkerService {
       url.searchParams.set('client_code', clientCode);
       if (dateFromStr) {
         url.searchParams.set('date_from', dateFromStr);
+      }
+      if (qaStatus) {
+        url.searchParams.set('qa_status', qaStatus);
       }
       url.searchParams.set('page', page.toString());
       url.searchParams.set('limit', '500');
@@ -445,7 +556,19 @@ export class CrmSyncWorkerService {
    * Maps raw CRM API lead object into local CrmLeadItem structure
    */
   private mapRawLeadToCrmLeadItem(raw: any, fallbackClientCode: string): CrmLeadItem {
-    const rawLeadData = raw.raw_lead_data || {};
+    let rawLeadData: Record<string, any> = {};
+    if (typeof raw.raw_lead_data === 'string') {
+      try {
+        rawLeadData = JSON.parse(raw.raw_lead_data);
+      } catch {
+        rawLeadData = {};
+      }
+    } else if (raw.raw_lead_data && typeof raw.raw_lead_data === 'object') {
+      rawLeadData = { ...raw.raw_lead_data };
+    } else {
+      rawLeadData = { ...raw };
+    }
+
     const rawRecordings = Array.isArray(raw.recordings) ? raw.recordings : [];
 
     const campaignCode = (
@@ -464,11 +587,31 @@ export class CrmSyncWorkerService {
     const contactName =
       raw.full_name ||
       `${raw.first_name || ''} ${raw.last_name || ''}`.trim() ||
+      rawLeadData.contact_name ||
       'CRM Contact';
 
-    const leadRef = (raw.lead_reference_number || raw.lead_id || `LD-${raw.id}` || `LEAD-${Date.now()}`).toString();
+    const leadRef = (
+      raw.lead_reference_number ||
+      raw.lead_id ||
+      rawLeadData.lead_code ||
+      rawLeadData.lead_reference_number ||
+      `LD-${raw.id}` ||
+      `LEAD-${Date.now()}`
+    ).toString().trim();
 
-    let recordingUrl = raw.recording_url || (rawRecordings.length > 0 ? rawRecordings[0].url : '');
+    let recordingUrl = raw.recording_url || (rawRecordings.length > 0 ? rawRecordings[0].url : '') || rawLeadData.recording_file_path || '';
+    const recordingPath = raw.recording_path || rawLeadData.recording_path || (rawRecordings.length > 0 ? rawRecordings[0].file_path : undefined);
+
+    if (!recordingUrl && recordingPath) {
+      recordingUrl = `https://app.tarajglobal.com/demandflowbridge/api/get_recording.php?file=${encodeURIComponent(recordingPath)}`;
+    }
+
+    const qaStatusCrm = raw.qa_status || raw.quality_status || rawLeadData.qa_status || rawLeadData.quality_status || undefined;
+    const createdAt = raw.created_at || rawLeadData.created_at || rawLeadData.created_at_utc || new Date().toISOString();
+
+    if (!rawLeadData.created_at_utc) {
+      rawLeadData.created_at_utc = createdAt;
+    }
 
     return {
       id: raw.id ? raw.id.toString() : leadRef,
@@ -485,13 +628,13 @@ export class CrmSyncWorkerService {
       email: raw.email || undefined,
       phone: raw.phone || raw.contact_phone || undefined,
       recordingUrl,
-      recordingPath: raw.recording_path || undefined,
-      qaStatusCrm: raw.qa_status || raw.quality_status || undefined,
+      recordingPath,
+      qaStatusCrm,
       durationSeconds: raw.duration_seconds || 45,
-      rawLeadData: raw.raw_lead_data || undefined,
+      rawLeadData,
       syncedAt: new Date().toISOString(),
-      createdAt: raw.created_at || new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
+      createdAt,
+      updatedAt: raw.updated_at || new Date().toISOString(),
     };
   }
 
@@ -503,6 +646,7 @@ export class CrmSyncWorkerService {
       ...this.metricsState,
       lastFastSyncAt: this.lastFastSyncAt,
       lastReconciliationSyncAt: this.lastReconciliationSyncAt,
+      lastSuccessfulAutoSyncAt: this.lastSuccessfulAutoSyncAt,
     };
   }
 }

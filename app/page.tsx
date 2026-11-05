@@ -17,6 +17,28 @@ import { ClientConfig, CampaignConfig, ProcessingJobItem } from '../lib/types';
 
 export default function Home() {
   const [activeTab, setActiveTab] = useState<NavTab>('dashboard');
+
+  // Restore tab on reload from URL hash or localStorage
+  useEffect(() => {
+    try {
+      const hash = window.location.hash.replace('#', '') as NavTab;
+      const validTabs: NavTab[] = ['dashboard', 'all-leads', 'queue', 'analytics', 'configuration', 'settings'];
+      const savedTab = (localStorage.getItem('demandarm_active_tab') || '') as NavTab;
+      if (validTabs.includes(hash)) {
+        setActiveTab(hash);
+      } else if (validTabs.includes(savedTab)) {
+        setActiveTab(savedTab);
+      }
+    } catch {}
+  }, []);
+
+  const handleTabChange = (tab: NavTab) => {
+    setActiveTab(tab);
+    try {
+      localStorage.setItem('demandarm_active_tab', tab);
+      window.location.hash = tab;
+    } catch {}
+  };
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [theme, setTheme] = useState<'dark' | 'light'>('dark');
@@ -88,10 +110,13 @@ export default function Home() {
   const [selectedClientCode, setSelectedClientCode] = useState('ALL');
   const [selectedCampaignCode, setSelectedCampaignCode] = useState('ALL');
   const [statusFilter, setStatusFilter] = useState('ALL');
+  const [transcriptFilter, setTranscriptFilter] = useState('ALL');
   const [qaFilter, setQaFilter] = useState('ALL');
   const [agentFilter, setAgentFilter] = useState('ALL');
   const [dateFilter, setDateFilter] = useState('ALL');
-  const [queueDateFilter, setQueueDateFilter] = useState('today');
+  const [customDateFrom, setCustomDateFrom] = useState('');
+  const [customDateTo, setCustomDateTo] = useState('');
+  const [queueDateFilter, setQueueDateFilter] = useState('ALL');
   const [recordingFilter, setRecordingFilter] = useState('ALL');
   const [stageFilter, setStageFilter] = useState('ALL');
   const [agentOptions, setAgentOptions] = useState<string[]>([]);
@@ -176,7 +201,13 @@ export default function Home() {
       if (selectedCampaignCode !== 'ALL') url.searchParams.set('campaignCode', selectedCampaignCode);
       if (agentFilter !== 'ALL') url.searchParams.set('agent', agentFilter);
       if (qaFilter !== 'ALL') url.searchParams.set('qaStatus', qaFilter);
-      if (queueDateFilter !== 'ALL') url.searchParams.set('date', queueDateFilter);
+            if (queueDateFilter !== 'ALL') {
+        url.searchParams.set('date', queueDateFilter);
+        if (queueDateFilter === 'custom') {
+          if (customDateFrom) url.searchParams.set('dateFrom', customDateFrom);
+          if (customDateTo) url.searchParams.set('dateTo', customDateTo);
+        }
+      }
       if (recordingFilter !== 'ALL') url.searchParams.set('recording', recordingFilter);
       if (stageFilter !== 'ALL') url.searchParams.set('stage', stageFilter);
       if (searchQuery) url.searchParams.set('search', searchQuery);
@@ -204,7 +235,7 @@ export default function Home() {
     } catch (err) {
       console.error('Error fetching queue data:', err);
     }
-  }, [queueTab, selectedClientCode, selectedCampaignCode, agentFilter, qaFilter, queueDateFilter, recordingFilter, stageFilter, searchQuery, currentPage, pageSize]);
+  }, [queueTab, selectedClientCode, selectedCampaignCode, agentFilter, qaFilter, queueDateFilter, customDateFrom, customDateTo, recordingFilter, stageFilter, searchQuery, currentPage, pageSize]);
 
   // Load jobs & dashboard stats
   const fetchJobs = useCallback(async () => {
@@ -217,8 +248,15 @@ export default function Home() {
       if (selectedCampaignCode !== 'ALL') url.searchParams.set('campaignCode', selectedCampaignCode);
       if (activeTab === 'all-leads') {
         if (statusFilter !== 'ALL') url.searchParams.set('processingStatus', statusFilter);
+        if (transcriptFilter !== 'ALL') url.searchParams.set('transcriptStatus', transcriptFilter);
         if (agentFilter !== 'ALL') url.searchParams.set('agent', agentFilter);
-        if (dateFilter !== 'ALL') url.searchParams.set('date', dateFilter);
+                if (dateFilter !== 'ALL') {
+          url.searchParams.set('date', dateFilter);
+          if (dateFilter === 'custom') {
+            if (customDateFrom) url.searchParams.set('dateFrom', customDateFrom);
+            if (customDateTo) url.searchParams.set('dateTo', customDateTo);
+          }
+        }
         if (recordingFilter !== 'ALL') url.searchParams.set('recording', recordingFilter);
       } else if (statusFilter !== 'ALL') {
         url.searchParams.set('status', statusFilter);
@@ -250,7 +288,7 @@ export default function Home() {
     } catch (err) {
       console.error('Error fetching jobs:', err);
     }
-  }, [activeTab, fetchQueueData, selectedClientCode, selectedCampaignCode, statusFilter, qaFilter, agentFilter, dateFilter, recordingFilter, searchQuery, currentPage, pageSize]);
+  }, [activeTab, fetchQueueData, selectedClientCode, selectedCampaignCode, statusFilter, transcriptFilter, qaFilter, agentFilter, dateFilter, customDateFrom, customDateTo, recordingFilter, searchQuery, currentPage, pageSize]);
 
   // Fetch queue stats independently to keep sidebar badge updated
   const updateQueueBadge = useCallback(async () => {
@@ -294,14 +332,29 @@ export default function Home() {
     setStageFilter(stage);
     setCurrentPage(1);
   };
+  const handleTranscriptFilterChange = (status: string) => {
+    setTranscriptFilter(status);
+    setCurrentPage(1);
+  };
+  const handleCustomDateFromChange = (from: string) => {
+    setCustomDateFrom(from);
+    setCurrentPage(1);
+  };
+  const handleCustomDateToChange = (to: string) => {
+    setCustomDateTo(to);
+    setCurrentPage(1);
+  };
   const clearTableFilters = () => {
     setSelectedClientCode('ALL');
     setSelectedCampaignCode('ALL');
     setStatusFilter('ALL');
+    setTranscriptFilter('ALL');
     setQaFilter('ALL');
     setAgentFilter('ALL');
     setDateFilter('ALL');
-    setQueueDateFilter('today');
+    setCustomDateFrom('');
+    setCustomDateTo('');
+    setQueueDateFilter('ALL');
     setRecordingFilter('ALL');
     setStageFilter('ALL');
     setSearchQuery('');
@@ -383,7 +436,7 @@ export default function Home() {
         '5': 'configuration',
         '6': 'settings',
       };
-      if (tabs[event.key]) setActiveTab(tabs[event.key]);
+      if (tabs[event.key]) handleTabChange(tabs[event.key]);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -534,7 +587,7 @@ export default function Home() {
       {/* Persistent Collapsible Sidebar */}
       <Sidebar
         activeTab={activeTab}
-        setActiveTab={setActiveTab}
+        setActiveTab={handleTabChange}
         isCollapsed={isCollapsed}
         setIsCollapsed={setIsCollapsed}
         mobileOpen={mobileOpen}
@@ -592,7 +645,7 @@ export default function Home() {
               setSelectedCampaignCode={handleCampaignCodeChange}
               isProcessingPaused={isProcessingPaused}
               onTogglePause={handleTogglePause}
-              onNavigateToAllLeads={() => setActiveTab('all-leads')}
+              onNavigateToAllLeads={() => handleTabChange('all-leads')}
               onSyncCrm={handleSyncCrm}
             />
           )}
@@ -610,12 +663,18 @@ export default function Home() {
               setSelectedCampaignCode={handleCampaignCodeChange}
               statusFilter={statusFilter}
               setStatusFilter={handleStatusFilterChange}
+              transcriptFilter={transcriptFilter}
+              setTranscriptFilter={handleTranscriptFilterChange}
               qaFilter={qaFilter}
               setQaFilter={handleQaFilterChange}
               agentFilter={agentFilter}
               setAgentFilter={handleAgentFilterChange}
               dateFilter={dateFilter}
               setDateFilter={handleDateFilterChange}
+              customDateFrom={customDateFrom}
+              setCustomDateFrom={handleCustomDateFromChange}
+              customDateTo={customDateTo}
+              setCustomDateTo={handleCustomDateToChange}
               recordingFilter={recordingFilter}
               setRecordingFilter={handleRecordingFilterChange}
               agentOptions={agentOptions}
@@ -663,6 +722,10 @@ export default function Home() {
               setAgentFilter={handleAgentFilterChange}
               dateFilter={queueDateFilter}
               setDateFilter={handleQueueDateFilterChange}
+              customDateFrom={customDateFrom}
+              setCustomDateFrom={handleCustomDateFromChange}
+              customDateTo={customDateTo}
+              setCustomDateTo={handleCustomDateToChange}
               recordingFilter={recordingFilter}
               setRecordingFilter={handleRecordingFilterChange}
               stageFilter={stageFilter}
@@ -755,7 +818,7 @@ export default function Home() {
               onKeyDown={(event) => {
                 if (event.key === 'Enter') {
                   setSearchQuery(commandQuery);
-                  setActiveTab('all-leads');
+                  handleTabChange('all-leads');
                   setCommandOpen(false);
                 }
                 if (event.key === 'Escape') setCommandOpen(false);
@@ -770,7 +833,7 @@ export default function Home() {
                   type="button"
                   className="btn-secondary justify-between"
                   onClick={() => {
-                    setActiveTab(tab);
+                    handleTabChange(tab);
                     setCommandOpen(false);
                   }}
                 >

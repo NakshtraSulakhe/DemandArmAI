@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { dbStore, matchesDateRange, qaCategory } from '../../../lib/db/store';
+import { dbStore, matchesDateRange, qaCategory, getLeadTrueDate } from '../../../lib/db/store';
 import { CrmLeadItem, ProcessingJobItem } from '../../../lib/types';
 
 export async function GET(req: Request) {
@@ -13,6 +13,8 @@ export async function GET(req: Request) {
     const search = searchParams.get('search');
     const agent = searchParams.get('agent');
     const dateRange = searchParams.get('date');
+    const dateFrom = searchParams.get('dateFrom') || searchParams.get('from');
+    const dateTo = searchParams.get('dateTo') || searchParams.get('to');
     const recording = searchParams.get('recording');
     const rawPage = parseInt(searchParams.get('page') || '1', 10);
     const page = isNaN(rawPage) || rawPage < 1 ? 1 : rawPage;
@@ -43,14 +45,20 @@ export async function GET(req: Request) {
       if (job) {
         if (job.status === 'COMPLETED') {
           effectiveProcStatus = 'Completed';
-          effectiveTranscriptStatus = 'Completed';
+          effectiveTranscriptStatus = job.verifiedTranscript
+            ? 'Verified'
+            : job.editedTranscript
+            ? 'Edited'
+            : job.rawTranscript
+            ? 'Raw'
+            : 'Completed';
         } else if (job.status === 'FAILED') {
           effectiveProcStatus = 'Failed';
           effectiveTranscriptStatus = 'Failed';
         } else if (job.status === 'SKIPPED') {
           effectiveProcStatus = 'Skipped';
           effectiveTranscriptStatus = 'Not Generated';
-        } else if (['AUDIO_RETRIEVED', 'TRANSCRIBING', 'AI_EDITING', 'QA_EVALUATING'].includes(job.status)) {
+        } else if (['AUDIO_RETRIEVED', 'TRANSCRIBING', 'AI_EDITING', 'AI_VERIFYING', 'QA_EVALUATING'].includes(job.status)) {
           effectiveProcStatus = 'Processing';
           effectiveTranscriptStatus = 'Generating';
         } else {
@@ -98,8 +106,8 @@ export async function GET(req: Request) {
       mappedLeads = mappedLeads.filter((l) => (l.agentName || '').trim().toLowerCase() === agent.trim().toLowerCase());
     }
 
-    if (dateRange && dateRange !== 'ALL') {
-      mappedLeads = mappedLeads.filter((l) => matchesDateRange(l.createdAt || l.syncedAt, dateRange));
+    if ((dateRange && dateRange !== 'ALL') || dateFrom || dateTo) {
+      mappedLeads = mappedLeads.filter((l) => matchesDateRange(getLeadTrueDate(l), dateRange, dateFrom, dateTo));
     }
 
     if (recording === 'yes' || recording === 'no') {
@@ -110,8 +118,11 @@ export async function GET(req: Request) {
     }
 
     if (crmQaStatus && crmQaStatus !== 'ALL') {
-      const wanted = crmQaStatus === 'Pending QA' ? 'PENDING' : crmQaStatus;
-      mappedLeads = mappedLeads.filter((l) => qaCategory(l.job?.manualOverrideStatus || l.job?.qaStatus || l.qaStatusCrm) === wanted);
+      const wanted = (crmQaStatus === 'Pending QA' || crmQaStatus.toUpperCase() === 'PENDING') ? 'PENDING' : crmQaStatus.toUpperCase();
+      mappedLeads = mappedLeads.filter((l) => {
+        const cat = qaCategory(l.job?.manualOverrideStatus || l.job?.qaStatus || l.qaStatusCrm);
+        return cat === wanted;
+      });
     }
 
     if (processingStatus && processingStatus !== 'ALL') {
@@ -119,25 +130,38 @@ export async function GET(req: Request) {
     }
 
     if (transcriptStatus && transcriptStatus !== 'ALL') {
-      mappedLeads = mappedLeads.filter((l) => l.transcriptStatus.toUpperCase() === transcriptStatus.toUpperCase());
+      const ts = transcriptStatus.toUpperCase();
+      mappedLeads = mappedLeads.filter((l) => {
+        const status = (l.transcriptStatus || '').toUpperCase();
+        if (ts === 'VERIFIED') return status === 'VERIFIED';
+        if (ts === 'EDITED') return status === 'EDITED' || status === 'VERIFIED';
+        if (ts === 'RAW') return status === 'RAW' || status === 'EDITED' || status === 'VERIFIED';
+        if (ts === 'GENERATING') return status === 'GENERATING';
+        if (ts === 'NOT GENERATED' || ts === 'NOT_GENERATED') return status === 'NOT GENERATED' || status === 'PENDING';
+        return status === ts;
+      });
     }
 
     if (search) {
       const s = search.toLowerCase();
       mappedLeads = mappedLeads.filter(
         (l) =>
-          l.leadRef.toLowerCase().includes(s) ||
-          l.companyName?.toLowerCase().includes(s) ||
-          l.contactName?.toLowerCase().includes(s) ||
-          l.email?.toLowerCase().includes(s) ||
-          l.phone?.toLowerCase().includes(s) ||
-          l.agentName?.toLowerCase().includes(s) ||
-          l.campaignName?.toLowerCase().includes(s)
+          (l.leadRef || '').toLowerCase().includes(s) ||
+          (l.companyName || '').toLowerCase().includes(s) ||
+          (l.contactName || '').toLowerCase().includes(s) ||
+          (l.email || '').toLowerCase().includes(s) ||
+          (l.phone || '').toLowerCase().includes(s) ||
+          (l.agentName || '').toLowerCase().includes(s) ||
+          (l.campaignName || '').toLowerCase().includes(s) ||
+          (l.campaignCode || '').toLowerCase().includes(s) ||
+          (l.clientCode || '').toLowerCase().includes(s) ||
+          (l.jobTitle || '').toLowerCase().includes(s) ||
+          (l.country || '').toLowerCase().includes(s)
       );
     }
 
     // Sorting: Newer leads first
-    mappedLeads.sort((a, b) => new Date(b.createdAt || b.syncedAt || 0).getTime() - new Date(a.createdAt || a.syncedAt || 0).getTime());
+    mappedLeads.sort((a, b) => new Date(getLeadTrueDate(b) || 0).getTime() - new Date(getLeadTrueDate(a) || 0).getTime());
 
     const totalLeads = mappedLeads.length;
     const totalPages = limit > 0 ? Math.ceil(totalLeads / limit) || 1 : 1;
