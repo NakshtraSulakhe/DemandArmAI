@@ -124,11 +124,13 @@ export class CrmSyncWorkerService {
       dateFromStr = customDateFrom;
     } else if (isAutoSync && this.lastSuccessfulAutoSyncAt) {
       // Auto-sync: only fetch leads touched since the last successful run.
-      // Slice to date string (YYYY-MM-DD) so the CRM API date filter applies correctly.
       dateFromStr = this.lastSuccessfulAutoSyncAt.slice(0, 10);
     } else {
-      // Manual sync or first-ever run: fetch everything (no date restriction).
-      dateFromStr = '';
+      // Manual sync: default recent-leads window to last 14 days so we don't
+      // re-download tens of thousands of months-old closed leads on every click.
+      // Note: All "Pending" QA leads across ALL time are still fetched without date limits!
+      const fourteenDaysAgo = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+      dateFromStr = fourteenDaysAgo;
     }
 
     return this.executeSyncPass('FAST', dateFromStr, isAutoSync);
@@ -268,7 +270,10 @@ export class CrmSyncWorkerService {
           clientMetric.recordsFetched = leads.length;
           clientMetric.pagesProcessed = pagesProcessed;
 
-          // Process and upsert each lead into local MySQL database
+          // Process and batch upsert leads into DB (1 disk write instead of N writes!)
+          const leadsToUpsert: CrmLeadItem[] = [];
+          const newJobsToEnqueue: ProcessingJobItem[] = [];
+
           for (const rawLead of leads) {
             const parsedLead = this.mapRawLeadToCrmLeadItem(rawLead, clientCode);
 
@@ -304,10 +309,11 @@ export class CrmSyncWorkerService {
 
             // Check existing lead in DB
             const existingLead = dbStore.getLeadByRef(parsedLead.leadRef);
+            let effectiveLead = parsedLead;
 
             if (!existingLead) {
               // New Lead Insertion
-              dbStore.saveLead(parsedLead);
+              leadsToUpsert.push(parsedLead);
               clientMetric.recordsInserted++;
             } else {
               // Check if CRM-owned fields have changed
@@ -315,7 +321,7 @@ export class CrmSyncWorkerService {
 
               if (hasChanged) {
                 // Update ONLY CRM-owned fields without resetting DemandArm processing fields!
-                const updatedLead: CrmLeadItem = {
+                effectiveLead = {
                   ...existingLead,
                   contactName: parsedLead.contactName || existingLead.contactName,
                   companyName: parsedLead.companyName || existingLead.companyName,
@@ -328,7 +334,7 @@ export class CrmSyncWorkerService {
                   rawLeadData: parsedLead.rawLeadData || existingLead.rawLeadData,
                   syncedAt: new Date().toISOString(),
                 };
-                dbStore.saveLead(updatedLead);
+                leadsToUpsert.push(effectiveLead);
                 clientMetric.recordsUpdated++;
               } else {
                 clientMetric.recordsSkipped++;
@@ -337,18 +343,18 @@ export class CrmSyncWorkerService {
 
             // Evaluate Queue Eligibility (Pending QA + Recording Present + No Finished/Active Job)
             const existingJob = dbStore.getJobById(parsedLead.leadRef);
-            if (dbStore.isQueueEligible(parsedLead, existingJob)) {
+            if (dbStore.isQueueEligible(effectiveLead, existingJob)) {
               if (!existingJob) {
                 const newJob: ProcessingJobItem = {
                   id: `job_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-                  leadId: parsedLead.id,
-                  leadRef: parsedLead.leadRef,
+                  leadId: effectiveLead.id,
+                  leadRef: effectiveLead.leadRef,
                   status: 'PENDING',
                   attempts: 0,
                   createdAt: new Date().toISOString(),
                   updatedAt: new Date().toISOString(),
                 };
-                dbStore.upsertLeadsAndSyncJobs([parsedLead], [newJob]);
+                newJobsToEnqueue.push(newJob);
                 clientMetric.newJobsCreated++;
                 totalEnqueuedJobs++;
               } else if (existingJob.status === 'SKIPPED') {
@@ -359,6 +365,11 @@ export class CrmSyncWorkerService {
                 totalEnqueuedJobs++;
               }
             }
+          }
+
+          // Batch commit all new/modified leads and jobs for this client in 1 call!
+          if (leadsToUpsert.length > 0 || newJobsToEnqueue.length > 0) {
+            dbStore.upsertLeadsAndSyncJobs(leadsToUpsert, newJobsToEnqueue);
           }
 
           clientMetric.status = 'SUCCESS';
@@ -377,8 +388,11 @@ export class CrmSyncWorkerService {
         }
       }
 
-      // Ensure all existing pending QA leads in DB that are queue eligible also get enqueued
+      // Ensure all existing pending QA leads in DB that are queue eligible also get enqueued (in one batch)
       const allDbLeads = dbStore.getLeads();
+      const backlogJobs: ProcessingJobItem[] = [];
+      const backlogLeads: CrmLeadItem[] = [];
+
       for (const lead of allDbLeads) {
         const existingJob = dbStore.getJobById(lead.leadRef);
         if (dbStore.isQueueEligible(lead, existingJob) && !existingJob) {
@@ -391,9 +405,14 @@ export class CrmSyncWorkerService {
             createdAt: new Date().toISOString(),
             updatedAt: new Date().toISOString(),
           };
-          dbStore.upsertLeadsAndSyncJobs([lead], [newJob]);
+          backlogJobs.push(newJob);
+          backlogLeads.push(lead);
           totalEnqueuedJobs++;
         }
+      }
+
+      if (backlogJobs.length > 0) {
+        dbStore.upsertLeadsAndSyncJobs(backlogLeads, backlogJobs);
       }
 
       this.consecutiveFailures = 0;
