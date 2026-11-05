@@ -131,9 +131,9 @@ export function matchesDateRange(
   dateTo?: string | null
 ): boolean {
   if (!value) return false;
-  if (!range || range === 'ALL') {
-    if (!dateFrom && !dateTo) return true;
-  }
+  // If range is ALL (or empty) AND no custom date bounds → show everything
+  if ((!range || range === 'ALL') && !dateFrom && !dateTo) return true;
+
   const date = asUtcDate(value);
   if (Number.isNaN(date.getTime())) return false;
   const targetKey = utcDateKey(value);

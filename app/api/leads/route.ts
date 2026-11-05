@@ -118,10 +118,19 @@ export async function GET(req: Request) {
     }
 
     if (crmQaStatus && crmQaStatus !== 'ALL') {
-      const wanted = (crmQaStatus === 'Pending QA' || crmQaStatus.toUpperCase() === 'PENDING') ? 'PENDING' : crmQaStatus.toUpperCase();
+      const rawUpper = crmQaStatus.toUpperCase();
+      let wanted: string;
+      if (rawUpper === 'PENDING' || crmQaStatus === 'Pending QA') wanted = 'PENDING';
+      else if (rawUpper === 'QUALIFIED') wanted = 'QUALIFIED';
+      else if (rawUpper === 'NEEDS_REVIEW' || rawUpper === 'NEEDS REVIEW') wanted = 'NEEDS_REVIEW';
+      else if (rawUpper === 'REJECTED') wanted = 'REJECTED';
+      else wanted = rawUpper;
       mappedLeads = mappedLeads.filter((l) => {
-        const cat = qaCategory(l.job?.manualOverrideStatus || l.job?.qaStatus || l.qaStatusCrm);
-        return cat === wanted;
+        const catEffective = qaCategory(l.job?.manualOverrideStatus || l.job?.qaStatus || l.qaStatusCrm);
+        const catCrm = qaCategory(l.qaStatusCrm);
+        const catJob = qaCategory(l.job?.manualOverrideStatus || l.job?.qaStatus);
+        // Matches if either the effective category, CRM category, or Job QA category matches
+        return catEffective === wanted || catCrm === wanted || catJob === wanted;
       });
     }
 

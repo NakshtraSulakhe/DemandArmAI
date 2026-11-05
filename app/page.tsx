@@ -679,6 +679,10 @@ export default function Home() {
               setRecordingFilter={handleRecordingFilterChange}
               agentOptions={agentOptions}
               onClearFilters={clearTableFilters}
+              onApplyFilters={() => {
+                setCurrentPage(1);
+                fetchJobs();
+              }}
               searchQuery={searchQuery}
               setSearchQuery={handleSearchQueryChange}
               pagination={paginationInfo}
@@ -733,6 +737,10 @@ export default function Home() {
               setStageFilter={handleStageFilterChange}
               agentOptions={agentOptions}
               onClearFilters={clearTableFilters}
+              onApplyFilters={() => {
+                setCurrentPage(1);
+                fetchJobs();
+              }}
               searchQuery={searchQuery}
               setSearchQuery={handleSearchQueryChange}
               pagination={paginationInfo}

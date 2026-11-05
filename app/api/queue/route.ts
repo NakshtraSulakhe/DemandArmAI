@@ -130,10 +130,18 @@ export async function GET(req: Request) {
 
     // QA Status Filter
     if (qaStatus && qaStatus !== 'ALL') {
-      const wanted = (qaStatus === 'Pending QA' || qaStatus.toUpperCase() === 'PENDING') ? 'PENDING' : qaStatus.toUpperCase();
+      const rawUpper = qaStatus.toUpperCase();
+      let wanted: string;
+      if (rawUpper === 'PENDING' || qaStatus === 'Pending QA') wanted = 'PENDING';
+      else if (rawUpper === 'QUALIFIED') wanted = 'QUALIFIED';
+      else if (rawUpper === 'NEEDS_REVIEW' || rawUpper === 'NEEDS REVIEW') wanted = 'NEEDS_REVIEW';
+      else if (rawUpper === 'REJECTED') wanted = 'REJECTED';
+      else wanted = rawUpper;
       filteredJobs = filteredJobs.filter((j) => {
-        const cat = qaCategory(j.manualOverrideStatus || j.qaStatus || j.lead?.qaStatusCrm);
-        return cat === wanted;
+        const catEffective = qaCategory(j.manualOverrideStatus || j.qaStatus || j.lead?.qaStatusCrm);
+        const catCrm = qaCategory(j.lead?.qaStatusCrm);
+        const catJob = qaCategory(j.manualOverrideStatus || j.qaStatus);
+        return catEffective === wanted || catCrm === wanted || catJob === wanted;
       });
     }
 

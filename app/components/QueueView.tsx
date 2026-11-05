@@ -6,6 +6,7 @@ import {
   Play,
   AlertTriangle,
   CheckCircle2,
+  Filter,
   FilterX,
   SkipForward,
   ListFilter,
@@ -110,6 +111,7 @@ interface QueueViewProps {
   setStageFilter: (stage: string) => void;
   agentOptions: string[];
   onClearFilters: () => void;
+  onApplyFilters?: () => void;
   searchQuery: string;
   setSearchQuery: (q: string) => void;
   pagination: {
@@ -159,6 +161,7 @@ export default function QueueView({
   setStageFilter,
   agentOptions,
   onClearFilters,
+  onApplyFilters,
   searchQuery,
   setSearchQuery,
   pagination,
@@ -435,6 +438,15 @@ export default function QueueView({
                 <option value="SETUP">Needs setup</option>
               </select>
             )}
+
+            <button
+              type="button"
+              onClick={onApplyFilters}
+              className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-bold text-white bg-blue-600 hover:bg-blue-500 shadow-md shadow-blue-500/20 active:scale-95 transition-all cursor-pointer"
+            >
+              <Filter className="w-3.5 h-3.5" />
+              Apply
+            </button>
 
             {filtersActive && (
               <button type="button" onClick={onClearFilters} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold text-slate-300 border border-slate-700 hover:text-slate-100 hover:border-slate-500">
