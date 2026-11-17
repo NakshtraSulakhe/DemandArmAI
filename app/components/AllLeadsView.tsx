@@ -16,7 +16,7 @@ import {
   Sparkles,
   FileText,
 } from 'lucide-react';
-import { ClientConfig, CampaignConfig, ProcessingJobItem } from '../../lib/types';
+import { ClientConfig, CampaignConfig, ProcessingJobItem, UserRole } from '../../lib/types';
 import StatusBadge from './ui/StatusBadge';
 import EmptyState from './ui/EmptyState';
 import RowActions from './ui/RowActions';
@@ -74,6 +74,7 @@ interface AllLeadsViewProps {
   onDeleted?: () => void;
   isProcessingPaused?: boolean;
   onTogglePause?: () => void;
+  userRole?: UserRole;
 }
 
 export default function AllLeadsView({
@@ -116,6 +117,7 @@ export default function AllLeadsView({
   onDeleted,
   isProcessingPaused = false,
   onTogglePause,
+  userRole = 'ADMIN',
 }: AllLeadsViewProps) {
   const availableCampaigns =
     selectedClientCode !== 'ALL'
@@ -153,7 +155,7 @@ export default function AllLeadsView({
               <strong className="text-amber-400">Continuous AI Processing is STOPPED & LOCKED:</strong> All background Speech-to-Text and Gemini API credit usage is disabled until you manually click Start Pipeline.
             </div>
           </div>
-          {onTogglePause && (
+          {userRole === 'ADMIN' && onTogglePause && (
             <button
               onClick={onTogglePause}
               className="px-3.5 py-1.5 rounded-xl bg-emerald-500 text-slate-950 hover:bg-emerald-400 font-bold text-xs shrink-0 transition-colors cursor-pointer shadow-md"

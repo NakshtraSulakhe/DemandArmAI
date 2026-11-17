@@ -1,17 +1,29 @@
 import { NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
-import { consoleSessionToken } from '@/lib/security/session';
+import { getSessionUser } from '@/lib/security/session';
 
-export async function GET() {
-  const password = process.env.ADMIN_PASSWORD || '';
-  if (!password) {
-    return NextResponse.json({ required: false, authenticated: true });
+export async function GET(req: Request) {
+  try {
+    const user = await getSessionUser(req);
+
+    if (!user) {
+      return NextResponse.json({
+        required: true,
+        authenticated: false,
+        user: null,
+      });
+    }
+
+    return NextResponse.json({
+      required: true,
+      authenticated: true,
+      user,
+    });
+  } catch (err: any) {
+    return NextResponse.json({
+      required: true,
+      authenticated: false,
+      user: null,
+      error: err.message,
+    });
   }
-
-  const cookieStore = await cookies();
-  const value = cookieStore.get('qa_session')?.value;
-  return NextResponse.json({
-    required: true,
-    authenticated: value === consoleSessionToken(password),
-  });
 }

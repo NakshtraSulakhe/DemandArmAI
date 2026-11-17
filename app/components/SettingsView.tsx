@@ -18,8 +18,11 @@ import {
   Key,
   ShieldCheck,
   Radio,
+  Users,
+  UserPlus,
 } from 'lucide-react';
-import { AuditLogItem } from '../../lib/types';
+import { AuditLogItem, SessionUser } from '../../lib/types';
+import UserManagementSection from './UserManagementSection';
 
 interface SettingsData {
   gemini: {
@@ -70,9 +73,11 @@ interface SettingsData {
 interface SettingsViewProps {
   onSettingsUpdated: () => void;
   onSyncCrm: () => void;
+  currentUser?: SessionUser | null;
 }
 
-export default function SettingsView({ onSettingsUpdated, onSyncCrm }: SettingsViewProps) {
+export default function SettingsView({ onSettingsUpdated, onSyncCrm, currentUser }: SettingsViewProps) {
+  const [activeSubTab, setActiveSubTab] = useState<'credentials' | 'users'>('credentials');
   const [settingsData, setSettingsData] = useState<SettingsData | null>(null);
   const [auditLogs, setAuditLogs] = useState<AuditLogItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -285,14 +290,60 @@ export default function SettingsView({ onSettingsUpdated, onSyncCrm }: SettingsV
       <div>
         <h2 className="text-lg font-bold text-slate-100 flex items-center gap-2">
           <Key className="w-5 h-5 text-blue-400" />
-          API Credentials & Secure Provider Settings
+          Admin Panel & System Settings
         </h2>
         <p className="text-xs text-slate-400 mt-0.5">
-          Manage, test, and rotate API keys for Gemini Multimodal AI, Speech-to-Text providers, and CRM endpoints dynamically.
+          Manage system users, test and rotate API keys for AI models, and configure pipeline execution rules.
         </p>
       </div>
 
-      {/* Connection Test Banner Notification */}
+      {/* Admin Panel Sub-tabs */}
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-3">
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setActiveSubTab('credentials')}
+            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold transition-all ${
+              activeSubTab === 'credentials'
+                ? 'bg-blue-600/20 text-blue-400 border border-blue-500/40 shadow-sm'
+                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/40'
+            }`}
+          >
+            <Key className="w-4 h-4" />
+            <span>API Credentials & Pipeline</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveSubTab('users')}
+            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold transition-all ${
+              activeSubTab === 'users'
+                ? 'bg-indigo-600/20 text-indigo-400 border border-indigo-500/40 shadow-sm'
+                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/40'
+            }`}
+          >
+            <Users className="w-4 h-4" />
+            <span>User Management & Roles</span>
+          </button>
+        </div>
+
+        {activeSubTab === 'credentials' && (
+          <button
+            type="button"
+            onClick={() => setActiveSubTab('users')}
+            className="text-xs text-indigo-400 hover:text-indigo-300 font-semibold flex items-center gap-1.5 transition-colors"
+          >
+            <UserPlus className="w-3.5 h-3.5" />
+            <span>Create new user →</span>
+          </button>
+        )}
+      </div>
+
+      {activeSubTab === 'users' ? (
+        <UserManagementSection currentUser={currentUser} />
+      ) : (
+        <>
+          {/* Connection Test Banner Notification */}
       {testResult && (
         <div
           className={`p-4 rounded-xl border flex items-start gap-3 text-xs ${testResult.success
@@ -882,6 +933,8 @@ export default function SettingsView({ onSettingsUpdated, onSyncCrm }: SettingsV
           ))}
         </div>
       </div>
+        </>
+      )}
     </div>
   );
 }

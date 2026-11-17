@@ -1,8 +1,9 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import { Menu, RefreshCw, Play, Sun, Moon, Pause } from 'lucide-react';
+import { Menu, RefreshCw, Play, Sun, Moon, Pause, LogOut, User } from 'lucide-react';
 import { NavTab } from './Sidebar';
+import { SessionUser, UserRole } from '@/lib/types';
 
 interface HeaderProps {
   activeTab: NavTab;
@@ -17,6 +18,9 @@ interface HeaderProps {
   theme?: 'dark' | 'light';
   onToggleTheme?: () => void;
   lastSyncedAt?: Date | null;
+  userRole?: UserRole;
+  currentUser?: SessionUser | null;
+  onSignOut?: () => void;
 }
 
 const pageTitles: Record<NavTab, { title: string; subtitle: string }> = {
@@ -25,7 +29,7 @@ const pageTitles: Record<NavTab, { title: string; subtitle: string }> = {
   queue: { title: 'Processing queue', subtitle: 'Leads waiting for transcription, editing, or a retry.' },
   configuration: { title: 'Clients and campaigns', subtitle: 'Prompts and the rules each campaign is scored against.' },
   analytics: { title: 'Analytics', subtitle: 'Volume, scores, and cost from recorded pipeline usage.' },
-  settings: { title: 'Settings', subtitle: 'CRM connection, model keys, and how the queue runs.' },
+  settings: { title: 'Admin Panel & Settings', subtitle: 'User accounts, model keys, CRM connection, and pipeline policy.' },
 };
 
 function relativeSync(value: Date | null | undefined, now: number) {
@@ -50,9 +54,13 @@ export default function Header({
   theme = 'dark',
   onToggleTheme,
   lastSyncedAt,
+  userRole = 'ADMIN',
+  currentUser,
+  onSignOut,
 }: HeaderProps) {
   const current = pageTitles[activeTab];
   const [now, setNow] = useState(Date.now());
+  const isAdmin = userRole === 'ADMIN';
 
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 30000);
@@ -82,7 +90,8 @@ export default function Header({
           </span>
         </button>
 
-        {onTogglePause && (
+        {/* Pipeline pause/resume button: Admin only */}
+        {isAdmin && onTogglePause && (
           <button
             onClick={onTogglePause}
             className={`flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-semibold ${
@@ -100,23 +109,57 @@ export default function Header({
           </button>
         )}
 
-        <div className="flex flex-col items-end">
-          <button onClick={onSyncCrm} disabled={isSyncing} className="btn-secondary" title="Synchronize leads from the CRM">
-            <RefreshCw className={`h-3.5 w-3.5 ${isSyncing ? 'animate-spin text-sky-300' : ''}`} />
-            <span className="hidden md:inline">{isSyncing ? 'Syncing' : 'Sync CRM'}</span>
-          </button>
-          <span className="mt-0.5 hidden text-[10px] text-slate-500 lg:block">{relativeSync(lastSyncedAt, now)}</span>
-        </div>
+        {/* Sync CRM button: Admin only */}
+        {isAdmin && (
+          <div className="flex flex-col items-end">
+            <button onClick={onSyncCrm} disabled={isSyncing} className="btn-secondary" title="Synchronize leads from the CRM">
+              <RefreshCw className={`h-3.5 w-3.5 ${isSyncing ? 'animate-spin text-sky-300' : ''}`} />
+              <span className="hidden md:inline">{isSyncing ? 'Syncing' : 'Sync CRM'}</span>
+            </button>
+            <span className="mt-0.5 hidden text-[10px] text-slate-500 lg:block">{relativeSync(lastSyncedAt, now)}</span>
+          </div>
+        )}
 
-        <button
-          onClick={onProcessQueue}
-          disabled={isProcessing || isProcessingPaused}
-          className="btn-primary"
-          title={isProcessingPaused ? 'Resume the pipeline before running the queue.' : 'Run the queue now'}
-        >
-          <Play className={`h-3.5 w-3.5 ${isProcessing ? 'animate-spin' : 'fill-white'}`} />
-          <span>{isProcessing ? 'Starting' : 'Run queue'}</span>
-        </button>
+        {/* Start / Run Pipeline button: Admin only. Completely removed for users! */}
+        {isAdmin && (
+          <button
+            onClick={onProcessQueue}
+            disabled={isProcessing || isProcessingPaused}
+            className="btn-primary"
+            title={isProcessingPaused ? 'Resume the pipeline before running the queue.' : 'Run the queue now'}
+          >
+            <Play className={`h-3.5 w-3.5 ${isProcessing ? 'animate-spin' : 'fill-white'}`} />
+            <span>{isProcessing ? 'Starting' : 'Run queue'}</span>
+          </button>
+        )}
+
+        {/* Current user badge & Sign Out button */}
+        {currentUser && (
+          <div className="flex items-center gap-1.5 pl-2 border-l border-white/10 ml-1">
+            <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-slate-900/80 border border-slate-800">
+              <span className={`h-2 w-2 rounded-full ${isAdmin ? 'bg-indigo-400' : 'bg-sky-400'}`} />
+              <span className="text-xs font-semibold text-slate-200">{currentUser.name || currentUser.username}</span>
+              <span className={`text-[9px] font-black uppercase px-1.5 py-0.2 rounded-full border ${
+                isAdmin
+                  ? 'bg-indigo-500/20 text-indigo-300 border-indigo-500/30'
+                  : 'bg-sky-500/20 text-sky-300 border-sky-500/30'
+              }`}>
+                {userRole}
+              </span>
+            </div>
+            {onSignOut && (
+              <button
+                type="button"
+                onClick={onSignOut}
+                className="btn-ghost text-slate-400 hover:text-rose-300 hover:bg-rose-500/10 p-2"
+                title="Sign out of console"
+                aria-label="Sign out"
+              >
+                <LogOut className="w-4 h-4" />
+              </button>
+            )}
+          </div>
+        )}
       </div>
     </header>
   );

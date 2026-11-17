@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { dbStore } from '../../../../lib/db/store';
+import { getSessionUser } from '../../../../lib/security/session';
 
 export async function GET() {
   try {
@@ -15,6 +16,17 @@ export async function GET() {
 
 export async function POST(req: NextRequest) {
   try {
+    const user = await getSessionUser(req);
+    if (!user || user.role !== 'ADMIN') {
+      return NextResponse.json(
+        {
+          success: false,
+          error: 'Access denied: Only administrators can pause or start the pipeline.',
+        },
+        { status: 403 }
+      );
+    }
+
     const body = await req.json().catch(() => ({}));
     const settings = dbStore.getSettings();
 
@@ -30,8 +42,8 @@ export async function POST(req: NextRequest) {
       'global',
       nextState ? 'PIPELINE_PAUSED' : 'PIPELINE_RESUMED',
       nextState
-        ? 'Global Speech-to-Text & Gemini AI processing pipeline PAUSED by user. Credit usage stopped.'
-        : 'Global Speech-to-Text & Gemini AI processing pipeline RESUMED by user.'
+        ? `Global Speech-to-Text & Gemini AI processing pipeline PAUSED by ${user.username}. Credit usage stopped.`
+        : `Global Speech-to-Text & Gemini AI processing pipeline RESUMED by ${user.username}.`
     );
 
     return NextResponse.json({

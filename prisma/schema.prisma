@@ -115,6 +115,21 @@ model AuditLog {
   job       ProcessingJob? @relation(fields: [jobId], references: [id], onDelete: SetNull)
 }
 
+model User {
+  id           String   @id @default(cuid())
+  username     String   @unique
+  name         String
+  email        String?  @unique
+  passwordHash String   @db.Text
+  salt         String   @db.VarChar(64)
+  role         String   @default("USER")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([username])
+  @@index([role])
+}
+
 model SystemSettings {
   id                      String   @id @default("global")
   crmEndpoint             String   @default("")

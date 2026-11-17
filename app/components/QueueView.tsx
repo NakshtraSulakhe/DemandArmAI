@@ -20,7 +20,7 @@ import {
   Shield,
   Zap,
 } from 'lucide-react';
-import { ClientConfig, CampaignConfig, ProcessingJobItem } from '../../lib/types';
+import { ClientConfig, CampaignConfig, ProcessingJobItem, UserRole } from '../../lib/types';
 import StatusBadge from './ui/StatusBadge';
 import { usePopup } from './ui/Popup';
 import EmptyState from './ui/EmptyState';
@@ -131,6 +131,7 @@ interface QueueViewProps {
   isProcessing: boolean;
   isProcessingPaused?: boolean;
   onTogglePause?: () => void;
+  userRole?: UserRole;
 }
 
 export default function QueueView({
@@ -176,6 +177,7 @@ export default function QueueView({
   isProcessing,
   isProcessingPaused = false,
   onTogglePause,
+  userRole = 'ADMIN',
 }: QueueViewProps) {
   const popup = usePopup();
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -217,29 +219,32 @@ export default function QueueView({
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
-          {onTogglePause && (
-            <button
-              onClick={onTogglePause}
-              className={`flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold border transition-all cursor-pointer ${
-                isProcessingPaused
-                  ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 hover:bg-emerald-500/30'
-                  : 'bg-rose-500/15 text-rose-300 border-rose-500/30 hover:bg-rose-500/25'
-              }`}
-            >
-              {isProcessingPaused ? 'Start Pipeline' : 'Stop Pipeline'}
-            </button>
-          )}
+        {/* Pipeline Controls: Admin Only (Removed for standard User) */}
+        {userRole === 'ADMIN' && (
+          <div className="flex items-center gap-2">
+            {onTogglePause && (
+              <button
+                onClick={onTogglePause}
+                className={`flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold border transition-all cursor-pointer ${
+                  isProcessingPaused
+                    ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 hover:bg-emerald-500/30'
+                    : 'bg-rose-500/15 text-rose-300 border-rose-500/30 hover:bg-rose-500/25'
+                }`}
+              >
+                {isProcessingPaused ? 'Start Pipeline' : 'Stop Pipeline'}
+              </button>
+            )}
 
-          <button
-            onClick={onProcessQueue}
-            disabled={isProcessing || isProcessingPaused}
-            className="flex items-center justify-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white text-xs font-bold shadow-md shadow-blue-500/20 disabled:opacity-50 transition-all cursor-pointer"
-          >
-            <Play className={`w-3.5 h-3.5 ${isProcessing ? 'animate-spin' : ''}`} />
-            {isProcessing ? 'Processing Queue...' : 'Run Pipeline Worker Now'}
-          </button>
-        </div>
+            <button
+              onClick={onProcessQueue}
+              disabled={isProcessing || isProcessingPaused}
+              className="flex items-center justify-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white text-xs font-bold shadow-md shadow-blue-500/20 disabled:opacity-50 transition-all cursor-pointer"
+            >
+              <Play className={`w-3.5 h-3.5 ${isProcessing ? 'animate-spin' : ''}`} />
+              {isProcessing ? 'Processing Queue...' : 'Run Pipeline Worker Now'}
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Paused Warning Banner */}
@@ -250,11 +255,11 @@ export default function QueueView({
             <div>
               <div className="text-xs font-bold text-amber-300">Continuous Speech-to-Text & AI Editing is STOPPED</div>
               <div className="text-[11px] text-amber-300/80">
-                Background transcription and Gemini API calls are strictly locked OFF until you click &ldquo;Start Pipeline&rdquo;.
+                Background transcription and Gemini API calls are strictly locked OFF until an administrator starts the pipeline.
               </div>
             </div>
           </div>
-          {onTogglePause && (
+          {userRole === 'ADMIN' && onTogglePause && (
             <button
               onClick={onTogglePause}
               className="px-3.5 py-1.5 rounded-xl bg-emerald-500 text-slate-950 hover:bg-emerald-400 font-bold text-xs shrink-0 transition-colors shadow cursor-pointer"

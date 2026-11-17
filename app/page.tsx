@@ -13,10 +13,21 @@ import SettingsView from './components/SettingsView';
 import LeadDetailModal from './components/LeadDetailModal';
 import ToastStack, { ToastItem } from './components/ui/Toast';
 import SignInGate from './components/SignInGate';
-import { ClientConfig, CampaignConfig, ProcessingJobItem } from '../lib/types';
+import { ClientConfig, CampaignConfig, ProcessingJobItem, SessionUser } from '../lib/types';
 
 export default function Home() {
-  const [activeTab, setActiveTab] = useState<NavTab>('dashboard');
+  const [activeTab, setActiveTab] = useState<NavTab>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const hash = window.location.hash.replace('#', '') as NavTab;
+        const validTabs: NavTab[] = ['dashboard', 'all-leads', 'queue', 'analytics', 'configuration', 'settings'];
+        if (validTabs.includes(hash)) return hash;
+        const savedTab = (localStorage.getItem('demandarm_active_tab') || '') as NavTab;
+        if (validTabs.includes(savedTab)) return savedTab;
+      } catch {}
+    }
+    return 'dashboard';
+  });
 
   // Restore tab on reload from URL hash or localStorage
   useEffect(() => {
@@ -33,6 +44,10 @@ export default function Home() {
   }, []);
 
   const handleTabChange = (tab: NavTab) => {
+    if (tab === 'settings' && currentUser?.role === 'USER') {
+      notify('warning', 'Settings are restricted to administrators.');
+      return;
+    }
     setActiveTab(tab);
     try {
       localStorage.setItem('demandarm_active_tab', tab);
@@ -132,11 +147,29 @@ export default function Home() {
   const [toasts, setToasts] = useState<ToastItem[]>([]);
   const [reviewerName, setReviewerName] = useState('');
   const [authReady, setAuthReady] = useState(false);
+  const [currentUser, setCurrentUser] = useState<SessionUser | null>(null);
   const [signInRequired, setSignInRequired] = useState(false);
-  const [showOpenBanner, setShowOpenBanner] = useState(false);
   const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
   const [commandOpen, setCommandOpen] = useState(false);
   const [commandQuery, setCommandQuery] = useState('');
+
+  const handleSignInSuccess = (user: SessionUser) => {
+    setCurrentUser(user);
+    setSignInRequired(false);
+    notify('success', `Signed in as ${user.name || user.username} (${user.role})`);
+    fetchConfigurations();
+    fetchJobs();
+    updateQueueBadge();
+  };
+
+  const handleSignOut = async () => {
+    try {
+      await fetch('/api/auth/logout', { method: 'POST' });
+    } catch {}
+    setCurrentUser(null);
+    setSignInRequired(true);
+    notify('info', 'You have been signed out.');
+  };
 
   const notify = useCallback((tone: ToastItem['tone'], message: string) => {
     const id = `${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
@@ -160,6 +193,10 @@ export default function Home() {
   }, []);
 
   const handleTogglePause = async () => {
+    if (currentUser?.role !== 'ADMIN') {
+      notify('warning', 'Access restricted: Only administrators can pause or start the pipeline.');
+      return;
+    }
     try {
       const res = await fetch('/api/jobs/toggle-pause', { method: 'POST' });
       const data = await res.json();
@@ -281,7 +318,9 @@ export default function Home() {
 
         setSelectedJob((prevSelected) => {
           if (!prevSelected) return null;
-          const updated = data.jobs.find((j: ProcessingJobItem) => j.id === prevSelected.id);
+          const updated = data.jobs.find(
+            (j: ProcessingJobItem) => j.id === prevSelected.id || (j.leadRef && j.leadRef === prevSelected.leadRef)
+          );
           return updated || prevSelected;
         });
       }
@@ -384,10 +423,18 @@ export default function Home() {
     fetch('/api/auth/session')
       .then((res) => res.json())
       .then((data) => {
-        setSignInRequired(!!data.required && !data.authenticated);
-        setShowOpenBanner(!data.required && sessionStorage.getItem('hide-open-banner') !== '1');
+        if (data?.authenticated && data?.user) {
+          setCurrentUser(data.user);
+          setSignInRequired(false);
+        } else {
+          setCurrentUser(null);
+          setSignInRequired(true);
+        }
       })
-      .catch(() => undefined)
+      .catch(() => {
+        setCurrentUser(null);
+        setSignInRequired(true);
+      })
       .finally(() => setAuthReady(true));
     fetchConfigurations();
     fetchPauseStatus();
@@ -444,6 +491,10 @@ export default function Home() {
 
   // Sync CRM Leads Action
   const handleSyncCrm = async () => {
+    if (currentUser?.role !== 'ADMIN') {
+      notify('warning', 'Access restricted: Only administrators can trigger manual CRM sync.');
+      return;
+    }
     setIsSyncing(true);
     try {
       const res = await fetch('/api/crm/sync', { method: 'POST' });
@@ -469,6 +520,10 @@ export default function Home() {
 
   // Run Pipeline Queue Worker Action
   const handleProcessQueue = async () => {
+    if (currentUser?.role !== 'ADMIN') {
+      notify('warning', 'Access restricted: Only administrators can start the pipeline.');
+      return;
+    }
     setIsProcessing(true);
     try {
       const res = await fetch('/api/jobs/process', { method: 'POST' });
@@ -579,7 +634,7 @@ export default function Home() {
   }
 
   if (signInRequired) {
-    return <SignInGate onSuccess={() => setSignInRequired(false)} />;
+    return <SignInGate onSuccess={handleSignInSuccess} />;
   }
 
   return (
@@ -596,6 +651,9 @@ export default function Home() {
         pipelineRunning={!isProcessingPaused}
         theme={theme}
         onToggleTheme={toggleTheme}
+        userRole={currentUser?.role}
+        currentUser={currentUser}
+        onSignOut={handleSignOut}
       />
 
       {/* Main App Content Layout */}
@@ -615,24 +673,12 @@ export default function Home() {
           theme={theme}
           onToggleTheme={toggleTheme}
           lastSyncedAt={lastSyncedAt}
+          userRole={currentUser?.role}
+          currentUser={currentUser}
+          onSignOut={handleSignOut}
         />
 
         <main className="flex-1 transition-all duration-300 p-4 sm:p-6 lg:p-8 max-w-[1600px] w-full mx-auto">
-          {showOpenBanner && (
-            <div className="mb-4 flex items-start justify-between gap-3 rounded-xl border border-amber-700/50 bg-amber-950/40 px-3 py-2 text-xs text-amber-100">
-              <p>Anyone who can open this address can use the console. Set ADMIN_PASSWORD on the server to require a sign-in.</p>
-              <button
-                type="button"
-                className="shrink-0 font-semibold"
-                onClick={() => {
-                  sessionStorage.setItem('hide-open-banner', '1');
-                  setShowOpenBanner(false);
-                }}
-              >
-                Dismiss
-              </button>
-            </div>
-          )}
           {/* TAB 1: Analytical Dashboard */}
           {activeTab === 'dashboard' && (
             <DashboardView
@@ -647,6 +693,7 @@ export default function Home() {
               onTogglePause={handleTogglePause}
               onNavigateToAllLeads={() => handleTabChange('all-leads')}
               onSyncCrm={handleSyncCrm}
+              userRole={currentUser?.role}
             />
           )}
 
@@ -700,6 +747,7 @@ export default function Home() {
               }}
               isProcessingPaused={isProcessingPaused}
               onTogglePause={handleTogglePause}
+              userRole={currentUser?.role}
             />
           )}
 
@@ -758,6 +806,7 @@ export default function Home() {
               isProcessing={isProcessing}
               isProcessingPaused={isProcessingPaused}
               onTogglePause={handleTogglePause}
+              userRole={currentUser?.role}
             />
           )}
 
@@ -787,14 +836,15 @@ export default function Home() {
             <AnalyticsView clients={clients} campaigns={campaigns} />
           )}
 
-          {/* TAB 6: Settings Page */}
-          {activeTab === 'settings' && (
+          {/* TAB 6: Settings Page (Admin only) */}
+          {activeTab === 'settings' && currentUser?.role === 'ADMIN' && (
             <SettingsView
               onSettingsUpdated={() => {
                 fetchConfigurations();
                 fetchJobs();
               }}
               onSyncCrm={handleSyncCrm}
+              currentUser={currentUser}
             />
           )}
         </main>
@@ -803,6 +853,7 @@ export default function Home() {
       {/* Lead Details Modal / Drawer */}
       {selectedJob && (
         <LeadDetailModal
+          key={selectedJob.leadRef || selectedJob.id}
           job={selectedJob}
           onClose={() => setSelectedJob(null)}
           onRetryJob={handleRetryJob}

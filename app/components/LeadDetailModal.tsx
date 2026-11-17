@@ -95,18 +95,37 @@ export default function LeadDetailModal({
     setStretched((current) => !current);
   };
 
-  // Sync state when job changes
+  // Sync state only when a genuinely DIFFERENT lead is opened (tracked by leadRef or id).
+  // Initialized to the opened job's key so background refetches/polling do not falsely trigger "isNewJob"
+  // and unexpectedly shift activeTab back to 'qa'!
+  const currentJobKeyRef = React.useRef<string | null>(job ? (job.leadRef || job.id) : null);
+
   React.useEffect(() => {
     if (job) {
-      setEditedText(job.editedTranscript || '');
-      setOverrideStatus((job.manualOverrideStatus as any) || job.qaStatus || 'NEEDS_REVIEW');
-      setOverrideNotes(job.manualOverrideNotes || '');
-      setSelectedRecIdx(0);
-      setIsEditingTranscript(false);
-      setActiveTab('qa');
-      setStretched(true);
+      const jobKey = job.leadRef || job.id;
+      const isNewJob = currentJobKeyRef.current !== null && currentJobKeyRef.current !== jobKey;
+      currentJobKeyRef.current = jobKey;
+
+      if (isNewJob) {
+        setEditedText(job.editedTranscript || '');
+        setOverrideStatus((job.manualOverrideStatus as any) || job.qaStatus || 'NEEDS_REVIEW');
+        setOverrideNotes(job.manualOverrideNotes || '');
+        setSelectedRecIdx(0);
+        setIsEditingTranscript(false);
+        setActiveTab('qa');
+        setStretched(true);
+      } else {
+        // If it's the same job being polled/updated in the background, only update editable fields if not currently editing.
+        // DO NOT reset activeTab so the user stays on Verified, Edited, or whichever tab they selected!
+        if (!isEditingTranscript) {
+          setEditedText(job.editedTranscript || '');
+        }
+        setOverrideStatus((job.manualOverrideStatus as any) || job.qaStatus || 'NEEDS_REVIEW');
+      }
+    } else {
+      currentJobKeyRef.current = null;
     }
-  }, [job]);
+  }, [job, isEditingTranscript]);
 
   React.useEffect(() => {
     if (!job) return;

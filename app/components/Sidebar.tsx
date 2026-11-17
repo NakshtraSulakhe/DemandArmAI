@@ -13,7 +13,10 @@ import {
   Shield,
   Sun,
   Moon,
+  LogOut,
+  UserCheck,
 } from 'lucide-react';
+import { SessionUser, UserRole } from '@/lib/types';
 
 export type NavTab = 'dashboard' | 'all-leads' | 'queue' | 'configuration' | 'analytics' | 'settings';
 
@@ -28,6 +31,9 @@ interface SidebarProps {
   pipelineRunning?: boolean;
   theme?: 'dark' | 'light';
   onToggleTheme?: () => void;
+  userRole?: UserRole;
+  currentUser?: SessionUser | null;
+  onSignOut?: () => void;
 }
 
 export default function Sidebar({
@@ -41,15 +47,21 @@ export default function Sidebar({
   pipelineRunning = false,
   theme = 'dark',
   onToggleTheme,
+  userRole = 'ADMIN',
+  currentUser,
+  onSignOut,
 }: SidebarProps) {
-  const mainNavItems: { id: NavTab; label: string; icon: React.ReactNode; badge?: number; shortcut: string }[] = [
+  const allNavItems: { id: NavTab; label: string; icon: React.ReactNode; badge?: number; shortcut: string; adminOnly?: boolean }[] = [
     { id: 'dashboard', label: 'Dashboard', icon: <LayoutDashboard className="w-4 h-4" />, shortcut: '1' },
     { id: 'all-leads', label: 'All Leads', icon: <Users className="w-4 h-4" />, shortcut: '2' },
     { id: 'queue', label: 'Queue', icon: <Layers className="w-4 h-4" />, badge: queueCount, shortcut: '3' },
     { id: 'analytics', label: 'Analytics', icon: <BarChart2 className="w-4 h-4" />, shortcut: '4' },
     { id: 'configuration', label: 'Configuration', icon: <Sliders className="w-4 h-4" />, shortcut: '5' },
-    { id: 'settings', label: 'Settings', icon: <Settings className="w-4 h-4" />, shortcut: '6' },
+    { id: 'settings', label: 'Admin Panel', icon: <Settings className="w-4 h-4" />, shortcut: '6', adminOnly: true },
   ];
+
+  // Users get access to Dashboard, All Leads, Queue, Configuration, Analytics; Settings is strictly admin-only.
+  const mainNavItems = allNavItems.filter((item) => !item.adminOnly || userRole === 'ADMIN');
 
   return (
     <>
@@ -96,7 +108,7 @@ export default function Sidebar({
                   setActiveTab(item.id);
                   setMobileOpen(false);
                 }}
-                title={`${item.label}  (${item.shortcut})`}
+                title={`${item.label} (${item.shortcut})`}
                 className={`relative flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-xs font-semibold ${
                   isActive
                     ? 'bg-gradient-to-r from-indigo-600/90 to-blue-600/80 text-white shadow-lg shadow-indigo-600/20'
@@ -120,10 +132,45 @@ export default function Sidebar({
           })}
         </nav>
 
+        {/* Bottom Profile & Actions Area */}
         <div className="space-y-2 border-t border-white/10 p-3">
-          {!isCollapsed && (
-            <p className="px-1 text-[10px] text-slate-500">Ctrl/Cmd + K opens search. Keys 1–6 switch pages.</p>
+          {currentUser && (
+            <div className={`p-2 rounded-xl bg-slate-900/60 border border-slate-800/60 flex items-center gap-2 ${isCollapsed ? 'justify-center' : 'justify-between'}`}>
+              <div className="flex items-center gap-2 min-w-0">
+                <div className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 text-white font-bold text-xs ${
+                  userRole === 'ADMIN'
+                    ? 'bg-gradient-to-br from-indigo-500 to-purple-600'
+                    : 'bg-gradient-to-br from-sky-500 to-blue-600'
+                }`}>
+                  {userRole === 'ADMIN' ? 'A' : 'U'}
+                </div>
+                {!isCollapsed && (
+                  <div className="truncate">
+                    <div className="text-xs font-bold text-slate-200 truncate">{currentUser.name || currentUser.username}</div>
+                    <span className={`inline-block text-[9px] font-extrabold uppercase px-1.5 py-0.2 rounded-full border ${
+                      userRole === 'ADMIN'
+                        ? 'bg-indigo-500/20 text-indigo-300 border-indigo-500/30'
+                        : 'bg-sky-500/20 text-sky-300 border-sky-500/30'
+                    }`}>
+                      {userRole}
+                    </span>
+                  </div>
+                )}
+              </div>
+              {onSignOut && !isCollapsed && (
+                <button
+                  type="button"
+                  onClick={onSignOut}
+                  className="p-1.5 rounded-lg text-slate-400 hover:text-rose-300 hover:bg-rose-500/10 transition-colors"
+                  title="Sign out"
+                  aria-label="Sign out"
+                >
+                  <LogOut className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
           )}
+
           {onToggleTheme && (
             <button
               onClick={onToggleTheme}
@@ -134,6 +181,17 @@ export default function Sidebar({
                 {theme === 'light' ? <Moon className="h-4 w-4 text-indigo-400" /> : <Sun className="h-4 w-4 text-amber-300" />}
               </span>
               {!isCollapsed && <span>{theme === 'light' ? 'Dark theme' : 'Light theme'}</span>}
+            </button>
+          )}
+
+          {onSignOut && isCollapsed && (
+            <button
+              type="button"
+              onClick={onSignOut}
+              className="btn-secondary w-full justify-center px-0 text-slate-400 hover:text-rose-300"
+              title="Sign out"
+            >
+              <LogOut className="w-4 h-4" />
             </button>
           )}
         </div>

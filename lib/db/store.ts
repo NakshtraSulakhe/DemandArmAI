@@ -9,7 +9,9 @@ import {
   AuditLogItem,
   SystemSettingsConfig,
   ClientPromptVersion,
+  AppUser,
 } from '../types';
+import { hashPassword } from '../security/session';
 
 const DATA_DIR = path.join(process.cwd(), '.data');
 const STORE_FILE = path.join(DATA_DIR, 'db_store.json');
@@ -23,6 +25,7 @@ interface LocalStoreData {
   clientPrompts?: ClientPromptVersion[];
   dismissedLeadRefs?: string[];
   settings: SystemSettingsConfig;
+  users?: AppUser[];
 }
 
 const DEFAULT_SETTINGS: SystemSettingsConfig = {
@@ -225,8 +228,7 @@ async function withDbTimeout<T>(promise: Promise<T>, timeoutMs: number = 2500): 
   try {
     const res = await Promise.race([promise, timeoutPromise]);
     return res;
-  } catch (e) {
-    console.warn('Prisma DB connection timeout or error:', e);
+  } catch {
     return null;
   } finally {
     clearTimeout(timer!);
@@ -250,6 +252,36 @@ export class LocalDbStore {
   private isDbInitialized = false;
   private configBackupImported = false;
   private directoryRefreshed = false;
+  private isDbAvailable: boolean | null = null;
+  private lastDbCheck: number = 0;
+  private dbCheckCooldownMs: number = 60000;
+
+  private async isDatabaseReachable(): Promise<boolean> {
+    const now = Date.now();
+    if (this.isDbAvailable === false && now - this.lastDbCheck < this.dbCheckCooldownMs) {
+      return false;
+    }
+    this.lastDbCheck = now;
+    try {
+      const ping = await withDbTimeout(prisma.$queryRaw`SELECT 1`, 1200);
+      const ok = Boolean(ping);
+      if (this.isDbAvailable !== ok) {
+        if (!ok) {
+          console.info('[Database] MySQL server is offline at localhost:3306. Operating safely using the local JSON store.');
+        } else {
+          console.info('✅ [Database] MySQL connection established at localhost:3306.');
+        }
+      }
+      this.isDbAvailable = ok;
+      return ok;
+    } catch {
+      if (this.isDbAvailable !== false) {
+        console.info('[Database] MySQL server is offline at localhost:3306. Operating safely using the local JSON store.');
+      }
+      this.isDbAvailable = false;
+      return false;
+    }
+  }
 
   private constructor() {
     this.init();
@@ -283,6 +315,9 @@ export class LocalDbStore {
         }
       }
       if (!Array.isArray(this.data.dismissedLeadRefs)) this.data.dismissedLeadRefs = [];
+      if (!Array.isArray(this.data.users) || this.data.users.length === 0) {
+        this.seedDefaultUsers();
+      }
     } catch (e) {
       console.error('Local JSON init fallback error:', e);
     }
@@ -294,12 +329,19 @@ export class LocalDbStore {
   }
 
   public async syncFromDb(): Promise<void> {
+    if (!(await this.isDatabaseReachable())) {
+      this.dropDismissedLeads();
+      this.isDbInitialized = true;
+      return;
+    }
+
     const localClients = [...(this.data.clients || [])];
     const localCampaigns = [...(this.data.campaigns || [])];
     const localPrompts = [...(this.data.clientPrompts || [])];
     const localLeads = [...(this.data.leads || [])];
     const localJobs = [...(this.data.jobs || [])];
     const localAudits = [...(this.data.auditLogs || [])];
+    const localUsers = [...(this.data.users || [])];
 
     try {
       await this.mirrorMissingRecords({
@@ -309,6 +351,7 @@ export class LocalDbStore {
         leads: localLeads,
         jobs: localJobs,
         audits: localAudits,
+        users: localUsers,
       });
 
       // System Settings
@@ -483,6 +526,23 @@ export class LocalDbStore {
         this.data.auditLogs = this.mergeByKey(localAudits, mappedAudits, (log) => log.id);
       }
 
+      // Users from Database
+      const dbUsers = await withDbTimeout(prisma.user.findMany());
+      if (dbUsers && dbUsers.length > 0) {
+        const mappedUsers: AppUser[] = dbUsers.map((u) => ({
+          id: u.id,
+          username: u.username,
+          name: u.name,
+          email: u.email || undefined,
+          passwordHash: u.passwordHash,
+          salt: u.salt,
+          role: u.role as any,
+          createdAt: u.createdAt.toISOString(),
+          updatedAt: u.updatedAt.toISOString(),
+        }));
+        this.data.users = this.mergeByKey(this.data.users || [], mappedUsers, (u) => u.username.toLowerCase());
+      }
+
       this.dropDismissedLeads();
       this.isDbInitialized = true;
       this.persistLocalFile();
@@ -617,49 +677,64 @@ export class LocalDbStore {
     leads: CrmLeadItem[];
     jobs: ProcessingJobItem[];
     audits: AuditLogItem[];
+    users?: AppUser[];
   }): Promise<void> {
-    const settingsRow = await prisma.systemSettings.findUnique({ where: { id: 'global' }, select: { id: true } });
-    if (!settingsRow && this.data.settings) await this.persistSettingsToDb(this.data.settings);
+    if (!this.isDbAvailable) return;
+    try {
+      const settingsRow = await prisma.systemSettings.findUnique({ where: { id: 'global' }, select: { id: true } });
+      if (!settingsRow && this.data.settings) await this.persistSettingsToDb(this.data.settings);
 
-    const clientCodes = new Set((await prisma.client.findMany({ select: { code: true } })).map((row) => row.code));
-    for (const client of snapshot.clients) {
-      if (!client?.code || clientCodes.has(client.code)) continue;
-      await this.persistClientToDb(client);
-      clientCodes.add(client.code);
-    }
+      const clientCodes = new Set((await prisma.client.findMany({ select: { code: true } })).map((row) => row.code));
+      for (const client of snapshot.clients) {
+        if (!client?.code || clientCodes.has(client.code)) continue;
+        await this.persistClientToDb(client);
+        clientCodes.add(client.code);
+      }
 
-    const campaignCodes = new Set((await prisma.campaign.findMany({ select: { code: true } })).map((row) => row.code));
-    for (const campaign of snapshot.campaigns) {
-      if (!campaign?.code || campaignCodes.has(campaign.code)) continue;
-      await this.persistCampaignToDb(campaign);
-      campaignCodes.add(campaign.code);
-    }
+      const campaignCodes = new Set((await prisma.campaign.findMany({ select: { code: true } })).map((row) => row.code));
+      for (const campaign of snapshot.campaigns) {
+        if (!campaign?.code || campaignCodes.has(campaign.code)) continue;
+        await this.persistCampaignToDb(campaign);
+        campaignCodes.add(campaign.code);
+      }
 
-    const promptIds = new Set((await prisma.clientPromptVersion.findMany({ select: { id: true } })).map((row) => row.id));
-    for (const prompt of snapshot.prompts) {
-      if (!prompt?.id || promptIds.has(prompt.id)) continue;
-      await this.persistPromptVersionToDb(prompt);
-      promptIds.add(prompt.id);
-    }
+      const promptIds = new Set((await prisma.clientPromptVersion.findMany({ select: { id: true } })).map((row) => row.id));
+      for (const prompt of snapshot.prompts) {
+        if (!prompt?.id || promptIds.has(prompt.id)) continue;
+        await this.persistPromptVersionToDb(prompt);
+        promptIds.add(prompt.id);
+      }
 
-    const leadRefs = new Set((await prisma.crmLead.findMany({ select: { leadRef: true } })).map((row) => row.leadRef));
-    for (const lead of snapshot.leads) {
-      if (!lead?.leadRef || leadRefs.has(lead.leadRef)) continue;
-      await this.persistLeadToDb(lead);
-      leadRefs.add(lead.leadRef);
-    }
+      const leadRefs = new Set((await prisma.crmLead.findMany({ select: { leadRef: true } })).map((row) => row.leadRef));
+      for (const lead of snapshot.leads) {
+        if (!lead?.leadRef || leadRefs.has(lead.leadRef)) continue;
+        await this.persistLeadToDb(lead);
+        leadRefs.add(lead.leadRef);
+      }
 
-    const jobIds = new Set((await prisma.processingJob.findMany({ select: { id: true } })).map((row) => row.id));
-    for (const job of snapshot.jobs) {
-      if (!job?.id || jobIds.has(job.id)) continue;
-      await this.persistJobToDb(job);
-      jobIds.add(job.id);
-    }
+      const jobIds = new Set((await prisma.processingJob.findMany({ select: { id: true } })).map((row) => row.id));
+      for (const job of snapshot.jobs) {
+        if (!job?.id || jobIds.has(job.id)) continue;
+        await this.persistJobToDb(job);
+        jobIds.add(job.id);
+      }
 
-    const auditIds = new Set((await prisma.auditLog.findMany({ select: { id: true } })).map((row) => row.id));
-    for (const log of snapshot.audits) {
-      if (!log?.id || auditIds.has(log.id)) continue;
-      await this.persistAuditLogToDb(log);
+      const auditIds = new Set((await prisma.auditLog.findMany({ select: { id: true } })).map((row) => row.id));
+      for (const log of snapshot.audits) {
+        if (!log?.id || auditIds.has(log.id)) continue;
+        await this.persistAuditLogToDb(log);
+      }
+
+      if (snapshot.users && snapshot.users.length > 0) {
+        const userNames = new Set((await prisma.user.findMany({ select: { username: true } })).map((row) => row.username.toLowerCase()));
+        for (const user of snapshot.users) {
+          if (!user?.username || userNames.has(user.username.toLowerCase())) continue;
+          await this.persistUserToDb(user);
+          userNames.add(user.username.toLowerCase());
+        }
+      }
+    } catch {
+      this.isDbAvailable = false;
     }
   }
 
@@ -740,6 +815,7 @@ export class LocalDbStore {
   }
 
   private async persistClientToDb(client: ClientConfig): Promise<void> {
+    if (this.isDbAvailable === false) return;
     try {
       await prisma.client.upsert({
         where: { code: client.code },
@@ -758,12 +834,17 @@ export class LocalDbStore {
           isActive: client.isActive,
         },
       });
-    } catch (e) {
+    } catch (e: any) {
+      if (e?.code === 'P1001' || e?.message?.includes('database server') || e?.message?.includes('localhost:3306')) {
+        this.isDbAvailable = false;
+        return;
+      }
       console.error('Prisma persistClient error:', e);
     }
   }
 
   private async persistCampaignToDb(cmp: CampaignConfig): Promise<void> {
+    if (this.isDbAvailable === false) return;
     try {
       const parent = this.data.clients.find((client) => client.code.trim().toUpperCase() === cmp.clientCode.trim().toUpperCase());
       if (parent) await this.persistClientToDb(parent);
@@ -791,12 +872,17 @@ export class LocalDbStore {
           isActive: cmp.isActive,
         },
       });
-    } catch (e) {
+    } catch (e: any) {
+      if (e?.code === 'P1001' || e?.message?.includes('database server') || e?.message?.includes('localhost:3306')) {
+        this.isDbAvailable = false;
+        return;
+      }
       console.error('Prisma persistCampaign error:', e);
     }
   }
 
   private async persistLeadToDb(lead: CrmLeadItem): Promise<void> {
+    if (this.isDbAvailable === false) return;
     try {
       await prisma.crmLead.upsert({
         where: { leadRef: lead.leadRef },
@@ -842,18 +928,22 @@ export class LocalDbStore {
           createdAt: lead.createdAt ? new Date(lead.createdAt) : undefined,
         },
       });
-    } catch (e) {
+    } catch (e: any) {
+      if (e?.code === 'P1001' || e?.message?.includes('database server') || e?.message?.includes('localhost:3306')) {
+        this.isDbAvailable = false;
+        return;
+      }
       console.error('Prisma persistLead error:', e);
     }
   }
 
   private async persistJobToDb(job: ProcessingJobItem): Promise<void> {
+    if (this.isDbAvailable === false) return;
     try {
       const leadRow = job.leadRef
         ? await prisma.crmLead.findUnique({ where: { leadRef: job.leadRef }, select: { id: true } })
         : null;
       if (!leadRow) {
-        console.error(`Prisma persistJob skipped ${job.id}: lead ${job.leadRef} is not in MySQL yet.`);
         return;
       }
       const leadId = leadRow.id;
@@ -908,12 +998,17 @@ export class LocalDbStore {
           processingDurationMs: job.processingDurationMs || 0,
         },
       });
-    } catch (e) {
+    } catch (e: any) {
+      if (e?.code === 'P1001' || e?.message?.includes('database server') || e?.message?.includes('localhost:3306')) {
+        this.isDbAvailable = false;
+        return;
+      }
       console.error('Prisma persistJob error:', e);
     }
   }
 
   private async persistAuditLogToDb(log: AuditLogItem): Promise<void> {
+    if (this.isDbAvailable === false) return;
     try {
       let jobId = log.jobId || null;
       if (jobId) {
@@ -929,12 +1024,17 @@ export class LocalDbStore {
           timestamp: new Date(log.timestamp),
         },
       });
-    } catch (e) {
+    } catch (e: any) {
+      if (e?.code === 'P1001' || e?.message?.includes('database server') || e?.message?.includes('localhost:3306')) {
+        this.isDbAvailable = false;
+        return;
+      }
       console.error('Prisma persistAuditLog error:', e);
     }
   }
 
   private async persistPromptVersionToDb(pv: ClientPromptVersion): Promise<void> {
+    if (this.isDbAvailable === false) return;
     try {
       await prisma.clientPromptVersion.create({
         data: {
@@ -947,8 +1047,64 @@ export class LocalDbStore {
           createdAt: new Date(pv.createdAt || Date.now()),
         },
       });
-    } catch (e) {
+    } catch (e: any) {
+      if (e?.code === 'P1001' || e?.message?.includes('database server') || e?.message?.includes('localhost:3306')) {
+        this.isDbAvailable = false;
+        return;
+      }
       console.error('Prisma persistPromptVersion error:', e);
+    }
+  }
+
+  private async persistUserToDb(user: AppUser): Promise<void> {
+    if (this.isDbAvailable === false) return;
+    try {
+      await prisma.user.upsert({
+        where: { username: user.username },
+        update: {
+          name: user.name,
+          email: user.email || null,
+          passwordHash: user.passwordHash,
+          salt: user.salt,
+          role: user.role,
+        },
+        create: {
+          id: user.id,
+          username: user.username,
+          name: user.name,
+          email: user.email || null,
+          passwordHash: user.passwordHash,
+          salt: user.salt,
+          role: user.role,
+          createdAt: user.createdAt ? new Date(user.createdAt) : new Date(),
+        },
+      });
+    } catch (e: any) {
+      if (e?.code === 'P1001' || e?.message?.includes('database server') || e?.message?.includes('localhost:3306')) {
+        this.isDbAvailable = false;
+        return;
+      }
+      console.error('Prisma persistUser error:', e);
+    }
+  }
+
+  private async deleteUserFromDb(idOrUsername: string): Promise<void> {
+    if (this.isDbAvailable === false) return;
+    try {
+      await prisma.user.deleteMany({
+        where: {
+          OR: [
+            { id: idOrUsername },
+            { username: idOrUsername },
+          ],
+        },
+      });
+    } catch (e: any) {
+      if (e?.code === 'P1001' || e?.message?.includes('database server') || e?.message?.includes('localhost:3306')) {
+        this.isDbAvailable = false;
+        return;
+      }
+      console.error('Prisma deleteUser error:', e);
     }
   }
 
@@ -1822,6 +1978,87 @@ export class LocalDbStore {
       campaignAnalytics,
       statusDistribution,
     };
+  }
+
+  // ==========================================
+  // User Authentication & RBAC Management
+  // ==========================================
+  private seedDefaultUsers(): void {
+    if (!Array.isArray(this.data.users)) {
+      this.data.users = [];
+    }
+
+    const hasAdmin = this.data.users.some((u) => u.role === 'ADMIN');
+    const now = new Date().toISOString();
+
+    // Never hardcode credentials. Only create initial administrator if explicitly provided in environment variables (.env)
+    if (!hasAdmin && process.env.ADMIN_USERNAME && process.env.ADMIN_PASSWORD) {
+      const adminUsername = process.env.ADMIN_USERNAME.toLowerCase().trim();
+      const adminPass = process.env.ADMIN_PASSWORD;
+      const { hash, salt } = hashPassword(adminPass);
+      const initialAdmin: AppUser = {
+        id: 'usr_' + Date.now(),
+        username: adminUsername,
+        name: process.env.ADMIN_NAME || 'Administrator',
+        email: process.env.ADMIN_EMAIL || undefined,
+        passwordHash: hash,
+        salt,
+        role: 'ADMIN',
+        createdAt: now,
+        updatedAt: now,
+      };
+      this.data.users.push(initialAdmin);
+      this.persistLocalFile();
+      this.persistUserToDb(initialAdmin).catch(console.error);
+    }
+  }
+
+  public getUsers(): AppUser[] {
+    if (!Array.isArray(this.data.users)) {
+      this.data.users = [];
+    }
+    if (this.data.users.length === 0) {
+      this.seedDefaultUsers();
+    }
+    return this.data.users || [];
+  }
+
+  public getUserByUsername(username: string): AppUser | undefined {
+    const norm = (username || '').trim().toLowerCase();
+    if (!norm) return undefined;
+    return this.getUsers().find(
+      (u) => u.username.toLowerCase() === norm || (u.email && u.email.toLowerCase() === norm)
+    );
+  }
+
+  public upsertUser(user: AppUser): void {
+    this.getUsers();
+    const idx = this.data.users!.findIndex(
+      (u) => u.id === user.id || u.username.toLowerCase() === user.username.toLowerCase()
+    );
+    if (idx >= 0) {
+      this.data.users![idx] = { ...this.data.users![idx], ...user, updatedAt: new Date().toISOString() };
+    } else {
+      this.data.users!.push(user);
+    }
+    this.persistLocalFile();
+    this.persistUserToDb(user).catch(console.error);
+  }
+
+  public deleteUser(id: string): boolean {
+    this.getUsers();
+    const target = this.data.users!.find((u) => u.id === id || u.username === id);
+    const prevLen = this.data.users!.length;
+    this.data.users = this.data.users!.filter((u) => u.id !== id && u.username !== id);
+    if (this.data.users.length < prevLen) {
+      this.persistLocalFile();
+      this.deleteUserFromDb(id).catch(console.error);
+      if (target?.username) {
+        this.deleteUserFromDb(target.username).catch(console.error);
+      }
+      return true;
+    }
+    return false;
   }
 }
 

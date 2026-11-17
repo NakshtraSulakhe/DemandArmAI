@@ -35,7 +35,7 @@ export class CrmSyncWorkerService {
     clientMetrics: {},
   };
 
-  private constructor() {}
+  private constructor() { }
 
   public static getInstance(): CrmSyncWorkerService {
     if (!CrmSyncWorkerService.instance) {
@@ -55,7 +55,7 @@ export class CrmSyncWorkerService {
     const minutes = Math.min(120, Math.max(1, dbStore.getSettings().autoSyncInterval || 15));
     this.currentIntervalMs = minutes * 60 * 1000;
     console.log(`[CRM Sync Worker] Fast sync every ${minutes} minutes.`);
-    
+
     // Initial sync run on server start after 5 seconds delay
     // First run is treated as auto so it uses the lastSuccessfulAutoSyncAt if available.
     setTimeout(() => {

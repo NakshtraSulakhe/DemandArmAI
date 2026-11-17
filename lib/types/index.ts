@@ -414,3 +414,25 @@ export interface CrmSyncMetricsState {
   activeClientCodes: string[];
   clientMetrics: Record<string, ClientSyncMetrics>;
 }
+
+export type UserRole = 'ADMIN' | 'USER';
+
+export interface AppUser {
+  id: string;
+  username: string;
+  name: string;
+  email?: string;
+  passwordHash: string;
+  salt: string;
+  role: UserRole;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SessionUser {
+  id: string;
+  username: string;
+  name: string;
+  email?: string;
+  role: UserRole;
+}

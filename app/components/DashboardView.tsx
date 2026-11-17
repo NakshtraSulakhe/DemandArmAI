@@ -24,7 +24,7 @@ import {
   SlidersHorizontal,
   FileSpreadsheet,
 } from 'lucide-react';
-import { ClientConfig, CampaignConfig, AnalyticsSummary, ProcessingJobItem } from '../../lib/types';
+import { ClientConfig, CampaignConfig, AnalyticsSummary, ProcessingJobItem, UserRole } from '../../lib/types';
 
 interface DashboardViewProps {
   stats: {
@@ -58,6 +58,7 @@ interface DashboardViewProps {
   onTogglePause?: () => void;
   onNavigateToAllLeads?: () => void;
   onSyncCrm?: () => void;
+  userRole?: UserRole;
 }
 
 export default function DashboardView({
@@ -72,6 +73,7 @@ export default function DashboardView({
   onTogglePause,
   onNavigateToAllLeads,
   onSyncCrm,
+  userRole = 'ADMIN',
 }: DashboardViewProps) {
   const [daysFilter, setDaysFilter] = useState<number>(30);
   const [analytics, setAnalytics] = useState<AnalyticsSummary | null>(null);
@@ -232,7 +234,7 @@ export default function DashboardView({
               <strong className="text-amber-300">Continuous AI Pipeline is PAUSED:</strong> Background Speech-to-Text and Gemini AI analysis will not auto-run until resumed.
             </div>
           </div>
-          {onTogglePause && (
+          {userRole === 'ADMIN' && onTogglePause && (
             <button
               onClick={onTogglePause}
               className="px-3 py-1.5 rounded-lg bg-emerald-500 text-slate-950 hover:bg-emerald-400 font-bold text-xs shrink-0 transition-colors cursor-pointer shadow"
